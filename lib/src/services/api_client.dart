@@ -34,11 +34,11 @@ class ApiClient {
   }
 
   // ==== Auth (signup returns custom token) ====
-  Future<String> signup({required String email, required String password, required String username}) async {
+  Future<String> signup({required String email, required String password, required String username, String? fcmToken, String? platform}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/auth/signup'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password, 'username': username}),
+      body: jsonEncode({'email': email, 'password': password, 'username': username, 'fcmToken': fcmToken, 'platform': platform}),
     );
     final data = _decode(res);
     return data['customToken'] as String;

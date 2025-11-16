@@ -1,5 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'api_client.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'dart:io';
+
 
 class AuthService {
   AuthService._(this.api);
@@ -17,7 +20,14 @@ class AuthService {
 
   // Backend signup -> customToken -> sign in
   Future<void> register({required String email, required String password, required String username}) async {
-    final customToken = await api.signup(email: email, password: password, username: username);
+    await FirebaseMessaging.instance.requestPermission();
+    final fcmToken = await FirebaseMessaging.instance.getToken();   
+    final platform = Platform.isAndroid
+        ? 'android'
+        : Platform.isIOS
+            ? 'ios'
+            : 'unknown';
+    final customToken = await api.signup(email: email, password: password, username: username, fcmToken: fcmToken, platform: platform);
     await _auth.signInWithCustomToken(customToken);
   }
 
