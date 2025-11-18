@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:visibility_detector/visibility_detector.dart';
+import '../../screens/list_screen.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -216,6 +217,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                           child: CircleAvatar(
                             backgroundColor: Colors.white.withOpacity(0.5),
                             radius: 25,
+                            //--------------------------------CAMERA SWITCH BUTTON-------------------------------------
                             child: IconButton(
                               onPressed: () async {
                                 try {
@@ -242,31 +244,36 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                         child: Visibility(
                           visible: !disableButtons,
                           child: StatefulBuilder(
+                            //RECORD DURATION BUTTON - CHANGE TO LISTS BUTTON
                             builder: (context, localSetState) {
                               return GestureDetector(
                                 onTap: () {
-                                  final List<int> time = [15, 30, 60, 90];
-                                  int currentIndex = time.indexOf(
-                                    cameraBloc.recordDurationLimit,
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const ListScreen(), // <-- your page here
+                                    ),
                                   );
-                                  localSetState(() {
-                                    cameraBloc.setRecordDurationLimit =
-                                        time[(currentIndex + 1) % time.length];
-                                  });
+                                  //storage code for if you want to change duration limit in settings
+                                  // final List<int> time = [15, 30, 60, 90];
+                                  // int currentIndex = time.indexOf(
+                                  //   cameraBloc.recordDurationLimit,
+                                  // );
+                                  // localSetState(() {
+                                  //   cameraBloc.setRecordDurationLimit =
+                                  //       time[(currentIndex + 1) % time.length];
+                                  // });
                                 },
                                 child: CircleAvatar(
                                   backgroundColor: Colors.white.withOpacity(
                                     0.5,
                                   ),
                                   radius: 25,
-                                  child: FittedBox(
-                                    child: Text(
-                                      "${cameraBloc.recordDurationLimit}",
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                  ),
+                                  child: const Icon(
+                                    Icons.list,
+                                    color: Colors.black,
+                                    size: 28,
+                                  )
                                 ),
                               );
                             },

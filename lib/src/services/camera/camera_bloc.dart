@@ -17,7 +17,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   final PermissionUtils permissionUtils;
 
   //....... Internal variables ........
-  int recordDurationLimit = 15;
+  int recordDurationLimit = 60;
   CameraController? _cameraController;
   CameraLensDirection currentLensDirection = CameraLensDirection.back;
   Timer? recordingTimer;
