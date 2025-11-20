@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:camera/camera.dart';
+import 'package:project_hermes_front_end/src/screens/settings_screen.dart';
 import 'camera_bloc.dart';
 import 'camera_state.dart';
 import '../../enums/camera_enums.dart';
@@ -121,169 +122,157 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Widget _cameraBlocBuilder(BuildContext context, CameraState state) {
-    bool disableButtons = !(state is CameraReady && !state.isRecordingVideo);
-    //  bool isRecording = state is CameraReady && state.isRecordingVideo;
-    return Column(
-      children: [
-        Expanded(
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              RepaintBoundary(
-                key: screenshotKey,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 400),
-                  switchInCurve: Curves.linear,
-                  transitionBuilder: (
-                    Widget child,
-                    Animation<double> animation,
-                  ) {
-                    return FadeTransition(
-                      opacity: animation,
-                      alwaysIncludeSemantics: true,
-                      child: child,
-                    );
-                  },
-                  child:
-                      state is CameraReady
-                          ? Builder(
-                            builder: (context) {
-                              var controller = cameraBloc.getController();
-                              if (controller == null || !controller.value.isInitialized) {
-                                return const Center(child: CircularProgressIndicator());
-                              }
-                              return Transform.scale(
-                                scale:
-                                    1 /
-                                    (controller.value.aspectRatio *
-                                        MediaQuery.of(
-                                          context,
-                                        ).size.aspectRatio),
-                                child: CameraPreview(controller),
-                              );
-                            },
-                          )
-                          : state is CameraInitial && screenshotBytes != null
-                          ? Container(
-                            constraints: const BoxConstraints.expand(),
-                            decoration: BoxDecoration(
-                              image: DecorationImage(
-                                image: MemoryImage(screenshotBytes!),
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(
-                                sigmaX: 15.0,
-                                sigmaY: 15.0,
-                              ),
-                              child: Container(),
-                            ),
-                          )
-                          : const SizedBox.shrink(),
+  final bool isReady = state is CameraReady;
+  final bool disableButtons = !(isReady && !state.isRecordingVideo);
+
+  // Get the controller once
+  final controller = cameraBloc.getController();
+
+  // Keep the preview subtree mounted; do NOT wrap in AnimatedSwitcher.
+  final Widget preview = (controller != null && controller.value.isInitialized)
+      ? Transform.scale(
+          key: const ValueKey('stable_camera_preview'),
+          scale: 1 /
+              (controller.value.aspectRatio *
+                  MediaQuery.of(context).size.aspectRatio),
+          child: CameraPreview(controller),
+        )
+      : const SizedBox.shrink();
+
+  return Column(
+    children: [
+      Expanded(
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Preview surface that should remain alive
+            RepaintBoundary(
+              key: screenshotKey,
+              child: preview,
+            ),
+
+            // Optional blurred screenshot backdrop while not ready
+            if (!isReady && screenshotBytes != null)
+              Container(
+                constraints: const BoxConstraints.expand(),
+                decoration: BoxDecoration(
+                  image: DecorationImage(
+                    image: MemoryImage(screenshotBytes!),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0),
+                  child: const SizedBox.shrink(),
                 ),
               ),
-              if (state is CameraError) errorWidget(state),
-              Positioned(
-                bottom: 30,
-                child: SizedBox(
-                  width: 250,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      IgnorePointer(
-                        ignoring:
-                            state is! CameraReady ||
-                            state.decativateRecordButton,
-                        child: Opacity(
-                          opacity:
-                              state is! CameraReady ||
-                                      state.decativateRecordButton
-                                  ? 0.4
-                                  : 1,
-                          child: animatedProgressButton(state),
-                        ),
-                      ),
-                      Positioned(
-                        right: 0,
-                        child: Visibility(
-                          visible: !disableButtons,
-                          child: CircleAvatar(
-                            backgroundColor: Colors.white.withOpacity(0.5),
-                            radius: 25,
-                            //--------------------------------CAMERA SWITCH BUTTON-------------------------------------
-                            child: IconButton(
-                              onPressed: () async {
-                                try {
-                                  screenshotBytes = await takeCameraScreenshot(
-                                    key: screenshotKey,
-                                  );
-                                  if (context.mounted)
-                                    cameraBloc.add(CameraSwitch());
-                                } catch (e) {
-                                  //screenshot error
-                                }
-                              },
-                              icon: const Icon(
-                                Icons.cameraswitch,
-                                color: Colors.black,
-                                size: 28,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        left: 0,
-                        child: Visibility(
-                          visible: !disableButtons,
-                          child: StatefulBuilder(
-                            //RECORD DURATION BUTTON - CHANGE TO LISTS BUTTON
-                            builder: (context, localSetState) {
-                              return GestureDetector(
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const ListScreen(), // <-- your page here
-                                    ),
-                                  );
-                                  //storage code for if you want to change duration limit in settings
-                                  // final List<int> time = [15, 30, 60, 90];
-                                  // int currentIndex = time.indexOf(
-                                  //   cameraBloc.recordDurationLimit,
-                                  // );
-                                  // localSetState(() {
-                                  //   cameraBloc.setRecordDurationLimit =
-                                  //       time[(currentIndex + 1) % time.length];
-                                  // });
-                                },
-                                child: CircleAvatar(
-                                  backgroundColor: Colors.white.withOpacity(
-                                    0.5,
-                                  ),
-                                  radius: 25,
-                                  child: const Icon(
-                                    Icons.list,
-                                    color: Colors.black,
-                                    size: 28,
-                                  )
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
+
+            // Loader overlay for ANY non-ready state
+            if (!isReady) const Center(child: CircularProgressIndicator()),
+
+            // Error overlay (on top)
+            if (state is CameraError) errorWidget(state),
+
+            // ---- Top-right Settings button (outside bottom control box) ----
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 12,
+              right: 12,
+              child: Visibility(
+                visible: !disableButtons,
+                child: CircleAvatar(
+                  backgroundColor: Colors.white.withOpacity(0.5),
+                  radius: 25,
+                  child: IconButton(
+                    tooltip: 'Settings',
+                    icon: const Icon(Icons.settings, color: Colors.black, size: 28),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                      );
+                    },
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+
+            // ---- Bottom controls (unchanged structure) ----
+            Positioned(
+              bottom: 30,
+              child: SizedBox(
+                width: 250,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IgnorePointer(
+                      ignoring: state is! CameraReady || state.decativateRecordButton,
+                      child: Opacity(
+                        opacity: (state is! CameraReady || state.decativateRecordButton) ? 0.4 : 1,
+                        child: animatedProgressButton(state),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      child: Visibility(
+                        visible: !disableButtons,
+                        child: CircleAvatar(
+                          backgroundColor: Colors.white.withOpacity(0.5),
+                          radius: 25,
+                          // -------- CAMERA SWITCH BUTTON ----------
+                          child: IconButton(
+                            onPressed: () async {
+                              try {
+                                screenshotBytes = await takeCameraScreenshot(key: screenshotKey);
+                                if (context.mounted) {
+                                  cameraBloc.add(CameraSwitch());
+                                }
+                              } catch (_) {
+                                // screenshot error - ignore for now
+                              }
+                            },
+                            icon: const Icon(Icons.cameraswitch, color: Colors.black, size: 28),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      child: Visibility(
+                        visible: !disableButtons,
+                        child: StatefulBuilder(
+                          // RECORD DURATION BUTTON - changed to Lists button
+                          builder: (context, localSetState) {
+                            return GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const ListScreen(),
+                                  ),
+                                );
+                                // If you later want to cycle duration limits, restore that code here.
+                              },
+                              child: CircleAvatar(
+                                backgroundColor: Colors.white.withOpacity(0.5),
+                                radius: 25,
+                                child: const Icon(Icons.list, color: Colors.black, size: 28),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
+
 
   Widget animatedProgressButton(CameraState state) {
     bool isRecording = state is CameraReady && state.isRecordingVideo;
