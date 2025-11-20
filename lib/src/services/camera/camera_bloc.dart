@@ -142,15 +142,16 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   // Handle CameraEnable event on app resume
   void _onCameraEnable(CameraEnable event, Emitter<CameraState> emit) async {
-    if (!isInitialized() && _cameraController != null) {
-      if (await permissionUtils.getCameraAndMicrophonePermissionStatus()) {
+    if (await permissionUtils.getCameraAndMicrophonePermissionStatus()) {
+      if (_cameraController == null || !_cameraController!.value.isInitialized) {
         await _initializeCamera();
         emit(CameraReady(isRecordingVideo: false));
-      } else {
-        emit(CameraError(error: CameraErrorType.permission));
       }
+    } else {
+      emit(CameraError(error: CameraErrorType.permission));
     }
   }
+
 
   // Handle CameraDisable event when camera is not in use
   void _onCameraDisable(CameraDisable event, Emitter<CameraState> emit) async {
@@ -223,12 +224,17 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     }
   }
 
+  bool _isInitializing = false;
   // Initialize the camera controller
   Future<void> _initializeCamera() async {
-    _cameraController = await cameraUtils.getCameraController(
-      lensDirection: currentLensDirection,
-    );
+    if (_isInitializing) return;
+    if (_cameraController != null && _cameraController!.value.isInitialized) return;
+
+    _isInitializing = true;
     try {
+      _cameraController = await cameraUtils.getCameraController(
+        lensDirection: currentLensDirection,
+      );
       await _cameraController?.initialize();
       _cameraController?.addListener(() {
         if (_cameraController!.value.isRecordingVideo) {
@@ -236,9 +242,9 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
         }
       });
     } on CameraException catch (error) {
-      Future.error(error);
-    } catch (e) {
-      Future.error(e);
+      return Future.error(error);
+    } finally {
+      _isInitializing = false;
     }
   }
 
@@ -257,13 +263,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     await _initializeCamera();
   }
 
-  // Dispose of the camera controller
   Future<void> _disposeCamera() async {
-    _cameraController?.removeListener(() {});
+    _cameraController?.removeListener(() {}); // this no-op isn't needed, but ok
     await _cameraController?.dispose();
     _stopTimerAndResetDuration();
-    _cameraController = await cameraUtils.getCameraController(
-      lensDirection: currentLensDirection,
-    ); // it's important to remove old camera controller instances otherwise _cameraController!.value will remain unchanged hence _cameraController!.value.isInitialized will always true
+    _cameraController = null; // <-- important: DO NOT create a new controller here
   }
 }

@@ -37,27 +37,23 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    // Clean up resources and reset the CameraBloc on page dispose
-    cameraBloc.add(CameraReset());
-    cameraBloc.close();
+    // Remove both of these lines:
+    // cameraBloc.add(CameraReset());
+    // cameraBloc.close();
+
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // App state changed before we got the chance to initialize.
-    if (cameraBloc.getController() == null) return;
-
-    // Handle app lifecycle state changes (e.g., background, foreground)
-    if (state == AppLifecycleState.inactive) {
-      // Disable the camera when the app is inactive
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
       cameraBloc.add(CameraDisable());
-    }
-    if (state == AppLifecycleState.resumed) {
+    } else if (state == AppLifecycleState.resumed) {
       if (isThisPageVisibe) {
-        // Enable the camera when the app is resumed and this page is visible
-        cameraBloc.add(CameraEnable());
+        cameraBloc.add(CameraEnable());  // re-init if needed
       }
     }
   }
@@ -101,18 +97,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   void _handleVisibilityChanged(VisibilityInfo info) {
-    if (info.visibleFraction == 0.0) {
-      // Camera page is not visible, disable the camera.
-      if (mounted) {
-        cameraBloc.add(CameraDisable());
-        isThisPageVisibe = false;
-      }
-    } else {
-      // Camera page is visible, enable the camera.
-      isThisPageVisibe = true;
-      cameraBloc.add(CameraEnable());
-    }
+    final nowVisible = info.visibleFraction > 0.0;
+    if (nowVisible == isThisPageVisibe) return; // avoid spamming
+    isThisPageVisibe = nowVisible;
+    cameraBloc.add(nowVisible ? CameraEnable() : CameraDisable());
   }
+
+
 
   void startRecording() async {
     try {
@@ -158,10 +149,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                           ? Builder(
                             builder: (context) {
                               var controller = cameraBloc.getController();
+                              if (controller == null || !controller.value.isInitialized) {
+                                return const Center(child: CircularProgressIndicator());
+                              }
                               return Transform.scale(
                                 scale:
                                     1 /
-                                    (controller!.value.aspectRatio *
+                                    (controller.value.aspectRatio *
                                         MediaQuery.of(
                                           context,
                                         ).size.aspectRatio),
