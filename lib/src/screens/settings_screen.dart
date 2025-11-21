@@ -12,12 +12,12 @@ class SettingsScreen extends StatelessWidget {
         children: const [
           ListTile(
             title: Text('Video quality'),
-            subtitle: Text('720p (default)'),
+            subtitle: Text('1080p (default)'),
           ),
           Divider(),
           ListTile(
             title: Text('Record duration limit'),
-            subtitle: Text('60 seconds'),
+            subtitle: Text('tbd'),
           ),
         ],
       ),
