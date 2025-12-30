@@ -63,4 +63,8 @@ class ApiClient {
     => _authedPost('/call/answer', {'callId': callId, 'answer': answer});
 
   Future<Map<String, dynamic>> turnCredentials() => _authedGet('/turn/credentials');
+
+  Future<Map<String, dynamic>> getLists() => _authedGet('/lists');
+
+  Future<Map<String, dynamic>> postLists({required String title}) => _authedPost('/lists', {'title': title});
 }

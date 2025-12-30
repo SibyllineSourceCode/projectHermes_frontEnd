@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
 
 class ListScreen extends StatefulWidget {
   const ListScreen({super.key});
@@ -8,13 +9,96 @@ class ListScreen extends StatefulWidget {
 }
 
 class _ListScreenState extends State<ListScreen> {
-  // Seed data — replace with your data source later.
-  final List<String> _lists = [
-    'Home',
-    'Work',
-    'Important',
-    'Archive',
-  ];
+  List<String> _lists = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLists();
+  }
+
+  Future<void> _loadLists() async {
+    try {
+      final data = await AuthService.instance.api.getLists();
+      final raw = (data['lists'] as List?) ?? const [];
+
+      final names = raw.map<String>((e) {
+        if (e is String) return e;
+        if (e is Map<String, dynamic>) {
+          return (e['name'] ?? e['title'] ?? 'Untitled').toString();
+        }
+        return 'Untitled';
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _lists = names;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _addList(String title) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await AuthService.instance.api.postLists(title: title);
+      await _loadLists();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _showCreateListDialog() async {
+    final controller = TextEditingController();
+
+    final created = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create new list'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'List name',
+            hintText: 'e.g., Security Logs',
+          ),
+          onSubmitted: (_) => Navigator.pop(ctx, controller.text),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Create')),
+        ],
+      ),
+    );
+
+    final title = (created ?? '').trim();
+    if (title.isEmpty) return;
+
+    // Calls your POST + refresh
+    await _addList(title);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,53 +110,49 @@ class _ListScreenState extends State<ListScreen> {
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(padding),
-          child: GridView.builder(
-            itemCount: _lists.length + 1, // +1 for the "Add" tile
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2, // tweak for your design
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.1,
-            ),
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                // --- Add New List tile ---
-                return _AddListTile(
-                  onTap: () async {
-                    // TODO: Replace with your "list management" flow.
-                    // For now we push a stub page and optionally get a new name back.
-                    final createdName = await Navigator.push<String>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const ManageListPage(),
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Failed to load lists: $_error'),
+                        const SizedBox(height: 8),
+                        FilledButton(onPressed: _loadLists, child: const Text('Retry')),
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _loadLists,
+                    child: Padding(
+                      padding: EdgeInsets.all(padding),
+                      child: GridView.builder(
+                        itemCount: _lists.length + 1,
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 1.1,
+                        ),
+                        itemBuilder: (context, index) {
+                          if (index == 0) {
+                            return _AddListTile(onTap: _showCreateListDialog);
+                          }
+                          final name = _lists[index - 1];
+                          return _ListTileCard(
+                            title: name,
+                            onTap: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Open "$name"')),
+                              );
+                            },
+                            onLongPress: () => _showListActions(context, name, index - 1),
+                          );
+                        },
                       ),
-                    );
-                    if (createdName != null && createdName.trim().isNotEmpty) {
-                      setState(() => _lists.insert(0, createdName.trim()));
-                    }
-                  },
-                );
-              }
-
-              final name = _lists[index - 1];
-              return _ListTileCard(
-                title: name,
-                onTap: () {
-                  // TODO: Navigate to this list’s detail page
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Open "$name"')),
-                  );
-                },
-                onLongPress: () {
-                  // Optional: actions like rename/delete
-                  _showListActions(context, name, index - 1);
-                },
-              );
-            },
-          ),
-        ),
+                    ),
+                  ),
       ),
     );
   }
@@ -101,23 +181,18 @@ class _ListScreenState extends State<ListScreen> {
                         autofocus: true,
                         textInputAction: TextInputAction.done,
                         onSubmitted: (v) => Navigator.pop(context, v),
-                        decoration: const InputDecoration(
-                          hintText: 'Enter new name',
-                        ),
+                        decoration: const InputDecoration(hintText: 'Enter new name'),
                       ),
                       actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel'),
-                        ),
+                        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
                         FilledButton(
-                          onPressed: () =>
-                              Navigator.pop(context, controller.text),
+                          onPressed: () => Navigator.pop(context, controller.text),
                           child: const Text('Save'),
                         ),
                       ],
                     ),
                   );
+                  if (!mounted) return;
                   if (newName != null && newName.trim().isNotEmpty) {
                     setState(() => _lists[idx] = newName.trim());
                   }
@@ -141,11 +216,7 @@ class _ListScreenState extends State<ListScreen> {
 }
 
 class _ListTileCard extends StatelessWidget {
-  const _ListTileCard({
-    required this.title,
-    this.onTap,
-    this.onLongPress,
-  });
+  const _ListTileCard({required this.title, this.onTap, this.onLongPress});
 
   final String title;
   final VoidCallback? onTap;
@@ -169,9 +240,7 @@ class _ListTileCard extends StatelessWidget {
               title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ),
@@ -187,75 +256,15 @@ class _AddListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.black.withOpacity(0.06), // semi-transparent tile
+      color: Colors.black.withOpacity(0.06),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Center(
-          child: Icon(
-            Icons.add,
-            size: 48,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-          ),
+          child: Icon(Icons.add, size: 48, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
         ),
       ),
     );
   }
 }
-
-/// Stub management page — replace with your real "List Management" UI later.
-class ManageListPage extends StatefulWidget {
-  const ManageListPage({super.key});
-
-  @override
-  State<ManageListPage> createState() => _ManageListPageState();
-}
-
-class _ManageListPageState extends State<ManageListPage> {
-  final TextEditingController _name = TextEditingController();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Create New List')),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              TextField(
-                controller: _name,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(
-                  labelText: 'List name',
-                  hintText: 'e.g., Security Logs',
-                ),
-                onSubmitted: (_) => _submit(),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                icon: const Icon(Icons.check),
-                label: const Text('Create'),
-                onPressed: _submit,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _submit() {
-    final value = _name.text.trim();
-    if (value.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a list name.')),
-      );
-      return;
-    }
-    Navigator.pop(context, value);
-  }
-}
-
