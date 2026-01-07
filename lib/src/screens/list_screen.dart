@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 
 class ListScreen extends StatefulWidget {
   const ListScreen({super.key});
@@ -100,6 +103,55 @@ class _ListScreenState extends State<ListScreen> {
     await _addList(title);
   }
 
+  Future<void> _openContactsSheet({required String listName}) async {
+    // 1) Request permission first
+    final status = await Permission.contacts.request();
+
+    if (!mounted) return;
+
+    if (!status.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contacts permission denied')),
+      );
+      return;
+    }
+
+    // 2) Fetch contacts (with properties so we can show phones/emails if needed)
+    final contacts = await FlutterContacts.getContacts(
+      withProperties: true,
+      withPhoto: false,
+    );
+
+    if (!mounted) return;
+
+    // 3) Show floating modal sheet
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return _ContactsPickerSheet(
+          title: 'Contacts for "$listName"',
+          contacts: contacts,
+          onPick: (contact) {
+            // Do something with the chosen contact here:
+            // e.g. add to list, open detail, etc.
+            Navigator.pop(ctx);
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Selected: ${contact.displayName}')),
+            );
+          },
+        );
+      },
+    );
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final padding = MediaQuery.of(context).size.width * 0.04;
@@ -142,11 +194,7 @@ class _ListScreenState extends State<ListScreen> {
                           final name = _lists[index - 1];
                           return _ListTileCard(
                             title: name,
-                            onTap: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Open "$name"')),
-                              );
-                            },
+                            onTap: () => _openContactsSheet(listName: name),
                             onLongPress: () => _showListActions(context, name, index - 1),
                           );
                         },
@@ -214,6 +262,145 @@ class _ListScreenState extends State<ListScreen> {
     );
   }
 }
+
+class _ContactsPickerSheet extends StatefulWidget {
+  const _ContactsPickerSheet({
+    required this.title,
+    required this.contacts,
+    required this.onPick,
+  });
+
+  final String title;
+  final List<Contact> contacts;
+  final ValueChanged<Contact> onPick;
+
+  @override
+  State<_ContactsPickerSheet> createState() => _ContactsPickerSheetState();
+}
+
+class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
+  final _search = TextEditingController();
+  late List<Contact> _filtered;
+
+  @override
+  void initState() {
+    super.initState();
+    _filtered = widget.contacts;
+
+    _search.addListener(() {
+      final q = _search.text.trim().toLowerCase();
+      setState(() {
+        if (q.isEmpty) {
+          _filtered = widget.contacts;
+        } else {
+          _filtered = widget.contacts.where((c) {
+            final name = c.displayName.toLowerCase();
+            return name.contains(q);
+          }).toList();
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // "Smaller floating screen": limit height to ~70% of screen
+    final maxH = MediaQuery.of(context).size.height * 0.7;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxH),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search contacts',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+
+          Expanded(
+            child: _filtered.isEmpty
+                ? const Center(child: Text('No contacts found'))
+                : ListView.separated(
+                    itemCount: _filtered.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final c = _filtered[i];
+                      final subtitle = _bestSubtitle(c);
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(
+                            (c.displayName.isNotEmpty ? c.displayName[0] : '?')
+                                .toUpperCase(),
+                          ),
+                        ),
+                        title: Text(
+                          c.displayName.isEmpty ? 'Unnamed contact' : c.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: subtitle == null
+                            ? null
+                            : Text(
+                                subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                        onTap: () => widget.onPick(c),
+                      );
+                    },
+                  ),
+          ),
+
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  String? _bestSubtitle(Contact c) {
+    // Show a phone if present, else email, else nothing
+    if (c.phones.isNotEmpty) return c.phones.first.number;
+    if (c.emails.isNotEmpty) return c.emails.first.address;
+    return null;
+  }
+}
+
 
 class _ListTileCard extends StatelessWidget {
   const _ListTileCard({required this.title, this.onTap, this.onLongPress});
