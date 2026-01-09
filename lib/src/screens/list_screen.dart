@@ -137,14 +137,14 @@ class _ListScreenState extends State<ListScreen> {
         return _ContactsPickerSheet(
           title: 'Contacts for "$listName"',
           contacts: contacts,
-          onPick: (contact) {
-            // Do something with the chosen contact here:
-            // e.g. add to list, open detail, etc.
+          onDone: (members) {
             Navigator.pop(ctx);
 
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Selected: ${contact.displayName}')),
+              SnackBar(content: Text('Members: ${members.length}')),
             );
+
+            // TODO: send members to backend, etc.
           },
         );
       },
@@ -267,12 +267,12 @@ class _ContactsPickerSheet extends StatefulWidget {
   const _ContactsPickerSheet({
     required this.title,
     required this.contacts,
-    required this.onPick,
+    required this.onDone,
   });
 
   final String title;
   final List<Contact> contacts;
-  final ValueChanged<Contact> onPick;
+  final ValueChanged<List<Contact>> onDone;
 
   @override
   State<_ContactsPickerSheet> createState() => _ContactsPickerSheetState();
@@ -280,6 +280,10 @@ class _ContactsPickerSheet extends StatefulWidget {
 
 class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
   final _search = TextEditingController();
+
+  // Keep selections by ID so we can de-dupe and keep stable membership
+  final Map<String, Contact> _selectedById = {};
+
   late List<Contact> _filtered;
 
   @override
@@ -310,13 +314,14 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    // "Smaller floating screen": limit height to ~70% of screen
-    final maxH = MediaQuery.of(context).size.height * 0.7;
+    final maxH = MediaQuery.of(context).size.height * 0.75;
+    final members = _selectedById.values.toList();
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxH),
       child: Column(
         children: [
+          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
             child: Row(
@@ -331,6 +336,10 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                TextButton(
+                  onPressed: members.isEmpty ? null : () => widget.onDone(members),
+                  child: Text(members.isEmpty ? 'Done' : 'Done (${members.length})'),
+                ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
@@ -339,6 +348,17 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
             ),
           ),
 
+          // ===== Upper: Members section =====
+          _MembersSection(
+            members: members,
+            onRemove: (c) {
+              setState(() => _selectedById.remove(_contactKey(c)));
+            },
+          ),
+
+          const SizedBox(height: 8),
+
+          // ===== Lower: Search + Contacts list =====
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: TextField(
@@ -360,6 +380,9 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final c = _filtered[i];
+                      final id = _contactKey(c);
+                      final isSelected = _selectedById.containsKey(id);
+
                       final subtitle = _bestSubtitle(c);
 
                       return ListTile(
@@ -381,7 +404,19 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                        onTap: () => widget.onPick(c),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle)
+                            : const Icon(Icons.add_circle_outline),
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              // Toggle off if you want tap-to-remove
+                              _selectedById.remove(id);
+                            } else {
+                              _selectedById[id] = c;
+                            }
+                          });
+                        },
                       );
                     },
                   ),
@@ -393,11 +428,76 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
     );
   }
 
+  // Prefer contact.id if present; fall back to a derived key
+  String _contactKey(Contact c) {
+    if (c.id.isNotEmpty) return c.id;
+
+    // fallback: name + first phone/email
+    final phone = c.phones.isNotEmpty ? c.phones.first.number : '';
+    final email = c.emails.isNotEmpty ? c.emails.first.address : '';
+    return '${c.displayName}|$phone|$email';
+  }
+
   String? _bestSubtitle(Contact c) {
-    // Show a phone if present, else email, else nothing
     if (c.phones.isNotEmpty) return c.phones.first.number;
     if (c.emails.isNotEmpty) return c.emails.first.address;
     return null;
+  }
+}
+
+class _MembersSection extends StatelessWidget {
+  const _MembersSection({
+    required this.members,
+    required this.onRemove,
+  });
+
+  final List<Contact> members;
+  final ValueChanged<Contact> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Members',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              if (members.isEmpty)
+                Text(
+                  'Tap a contact below to add them.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: members.map((c) {
+                    final label = c.displayName.isEmpty ? 'Unnamed' : c.displayName;
+                    return InputChip(
+                      label: Text(
+                        label,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onDeleted: () => onRemove(c),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
