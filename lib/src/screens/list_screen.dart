@@ -3,6 +3,33 @@ import '../services/auth_service.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+class ListItem {
+  final String id; // Firestore doc id (UUID)
+  final String title;
+
+  const ListItem({required this.id, required this.title});
+
+  factory ListItem.fromJson(Map<String, dynamic> json) {
+    return ListItem(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? json['name'] ?? 'Untitled').toString(),
+    );
+  }
+
+  ListItem copyWith({String? id, String? title}) {
+    return ListItem(id: id ?? this.id, title: title ?? this.title);
+  }
+}
+
+class ListMember {
+  final String name;
+  final String phone;
+
+  ListMember({required this.name, required this.phone});
+
+  Map<String, dynamic> toJson() => {'name': name, 'phone': phone};
+}
+
 class ListScreen extends StatefulWidget {
   const ListScreen({super.key});
 
@@ -11,7 +38,7 @@ class ListScreen extends StatefulWidget {
 }
 
 class _ListScreenState extends State<ListScreen> {
-  List<String> _lists = [];
+  List<ListItem> _lists = [];
   bool _loading = true;
   String? _error;
 
@@ -26,18 +53,16 @@ class _ListScreenState extends State<ListScreen> {
       final data = await AuthService.instance.api.getLists();
       final raw = (data['lists'] as List?) ?? const [];
 
-      final names =
-          raw.map<String>((e) {
-            if (e is String) return e;
-            if (e is Map<String, dynamic>) {
-              return (e['name'] ?? e['title'] ?? 'Untitled').toString();
-            }
-            return 'Untitled';
+      final items =
+          raw.map<ListItem>((e) {
+            if (e is Map<String, dynamic>) return ListItem.fromJson(e);
+            // Fallback: if backend ever returns strings, keep UI working
+            return ListItem(id: '', title: e.toString());
           }).toList();
 
       if (!mounted) return;
       setState(() {
-        _lists = names;
+        _lists = items;
         _error = null;
         _loading = false;
       });
@@ -61,18 +86,14 @@ class _ListScreenState extends State<ListScreen> {
       await _loadLists();
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-      });
+      setState(() => _error = e.toString());
     } finally {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
+      setState(() => _loading = false);
     }
   }
 
-  Future<void> _populateList(String listID, List<ListMember> members) async {
+  Future<void> _populateList(String listId, List<ListMember> members) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -80,7 +101,7 @@ class _ListScreenState extends State<ListScreen> {
 
     try {
       await AuthService.instance.api.updateLists(
-        listID: listID,
+        listID: listId,
         contacts: members.map((m) => m.toJson()).toList(),
       );
       await _loadLists();
@@ -127,12 +148,13 @@ class _ListScreenState extends State<ListScreen> {
     final title = (created ?? '').trim();
     if (title.isEmpty) return;
 
-    // Calls your POST + refresh
     await _addList(title);
   }
 
-  Future<void> _openContactsSheet({required String listName}) async {
-    // 1) Request permission first
+  Future<void> _openContactsSheet({
+    required String listId,
+    required String listName,
+  }) async {
     final status = await Permission.contacts.request();
 
     if (!mounted) return;
@@ -144,7 +166,6 @@ class _ListScreenState extends State<ListScreen> {
       return;
     }
 
-    // 2) Fetch contacts (with properties so we can show phones/emails if needed)
     final contacts = await FlutterContacts.getContacts(
       withProperties: true,
       withPhoto: false,
@@ -152,7 +173,6 @@ class _ListScreenState extends State<ListScreen> {
 
     if (!mounted) return;
 
-    // 3) Show floating modal sheet
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -165,30 +185,30 @@ class _ListScreenState extends State<ListScreen> {
         return _ContactsPickerSheet(
           title: 'Contacts for "$listName"',
           contacts: contacts,
-          onDone: (contacts) async {
+          onDone: (selectedContacts) async {
             final members = <ListMember>[];
 
-            for (final c in contacts) {
+            for (final c in selectedContacts) {
               final name = c.displayName.trim();
               if (name.isEmpty) continue;
 
-              // Choose primary phone
               final phone =
                   c.phones.isNotEmpty ? c.phones.first.number.trim() : '';
-
               if (phone.isEmpty) continue;
 
               members.add(ListMember(name: name, phone: phone));
             }
 
-            await _populateList(listName, members);
+            await _populateList(listId, members);
 
             if (!ctx.mounted) return;
             Navigator.pop(ctx);
 
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Saved ${members.length} members')),
+              SnackBar(
+                content: Text('Saved ${members.length} members to "$listName"'),
+              ),
             );
           },
         );
@@ -237,12 +257,18 @@ class _ListScreenState extends State<ListScreen> {
                         if (index == 0) {
                           return _AddListTile(onTap: _showCreateListDialog);
                         }
-                        final name = _lists[index - 1];
+
+                        final item = _lists[index - 1];
+
                         return _ListTileCard(
-                          title: name,
-                          onTap: () => _openContactsSheet(listName: name),
+                          title: item.title,
+                          onTap:
+                              () => _openContactsSheet(
+                                listId: item.id,
+                                listName: item.title,
+                              ),
                           onLongPress:
-                              () => _showListActions(context, name, index - 1),
+                              () => _showListActions(context, item, index - 1),
                         );
                       },
                     ),
@@ -252,7 +278,7 @@ class _ListScreenState extends State<ListScreen> {
     );
   }
 
-  void _showListActions(BuildContext context, String name, int idx) {
+  void _showListActions(BuildContext context, ListItem item, int idx) {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -266,7 +292,8 @@ class _ListScreenState extends State<ListScreen> {
                 title: const Text('Rename'),
                 onTap: () async {
                   Navigator.pop(ctx);
-                  final controller = TextEditingController(text: name);
+
+                  final controller = TextEditingController(text: item.title);
                   final newName = await showDialog<String>(
                     context: context,
                     builder:
@@ -294,10 +321,14 @@ class _ListScreenState extends State<ListScreen> {
                           ],
                         ),
                   );
+
                   if (!mounted) return;
-                  if (newName != null && newName.trim().isNotEmpty) {
-                    setState(() => _lists[idx] = newName.trim());
-                  }
+
+                  final trimmed = (newName ?? '').trim();
+                  if (trimmed.isEmpty) return;
+
+                  // Local UI update. If you have a backend rename endpoint, call it here.
+                  setState(() => _lists[idx] = item.copyWith(title: trimmed));
                 },
               ),
               ListTile(
@@ -305,6 +336,8 @@ class _ListScreenState extends State<ListScreen> {
                 title: const Text('Delete'),
                 onTap: () {
                   Navigator.pop(ctx);
+
+                  // Local UI update. If you have a backend delete endpoint, call it here.
                   setState(() => _lists.removeAt(idx));
                 },
               ),
@@ -334,10 +367,7 @@ class _ContactsPickerSheet extends StatefulWidget {
 
 class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
   final _search = TextEditingController();
-
-  // Keep selections by ID so we can de-dupe and keep stable membership
   final Map<String, Contact> _selectedById = {};
-
   late List<Contact> _filtered;
 
   @override
@@ -376,7 +406,6 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
       constraints: BoxConstraints(maxHeight: maxH),
       child: Column(
         children: [
-          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
             child: Row(
@@ -393,7 +422,9 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                 ),
                 TextButton(
                   onPressed:
-                      members.isEmpty ? null : () => widget.onDone(members),
+                      members.isEmpty
+                          ? null
+                          : () async => await widget.onDone(members),
                   child: Text(
                     members.isEmpty ? 'Done' : 'Done (${members.length})',
                   ),
@@ -406,17 +437,14 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
             ),
           ),
 
-          // ===== Upper: Members section =====
           _MembersSection(
             members: members,
-            onRemove: (c) {
-              setState(() => _selectedById.remove(_contactKey(c)));
-            },
+            onRemove:
+                (c) => setState(() => _selectedById.remove(_contactKey(c))),
           ),
 
           const SizedBox(height: 8),
 
-          // ===== Lower: Search + Contacts list =====
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: TextField(
@@ -475,7 +503,6 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                           onTap: () {
                             setState(() {
                               if (isSelected) {
-                                // Toggle off if you want tap-to-remove
                                 _selectedById.remove(id);
                               } else {
                                 _selectedById[id] = c;
@@ -493,11 +520,8 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
     );
   }
 
-  // Prefer contact.id if present; fall back to a derived key
   String _contactKey(Contact c) {
     if (c.id.isNotEmpty) return c.id;
-
-    // fallback: name + first phone/email
     final phone = c.phones.isNotEmpty ? c.phones.first.number : '';
     final email = c.emails.isNotEmpty ? c.emails.first.address : '';
     return '${c.displayName}|$phone|$email';
@@ -508,15 +532,6 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
     if (c.emails.isNotEmpty) return c.emails.first.address;
     return null;
   }
-}
-
-class ListMember {
-  final String name;
-  final String phone;
-
-  ListMember({required this.name, required this.phone});
-
-  Map<String, dynamic> toJson() => {'name': name, 'phone': phone};
 }
 
 class _MembersSection extends StatelessWidget {
