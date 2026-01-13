@@ -156,7 +156,6 @@ class _ListScreenState extends State<ListScreen> {
     required String listName,
   }) async {
     final status = await Permission.contacts.request();
-
     if (!mounted) return;
 
     if (!status.isGranted) {
@@ -166,10 +165,25 @@ class _ListScreenState extends State<ListScreen> {
       return;
     }
 
-    final contacts = await FlutterContacts.getContacts(
+    // Fetch phone contacts
+    final phoneContacts = await FlutterContacts.getContacts(
       withProperties: true,
       withPhoto: false,
     );
+    if (!mounted) return;
+
+    // Fetch existing members from backend (Firebase)
+    List<ListMember> existingMembers = [];
+    try {
+      existingMembers = await _fetchListMembers(listId);
+    } catch (e) {
+      // Don’t block opening the sheet; just show empty members if fetch fails
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load existing members: $e')),
+        );
+      }
+    }
 
     if (!mounted) return;
 
@@ -184,21 +198,9 @@ class _ListScreenState extends State<ListScreen> {
       builder: (ctx) {
         return _ContactsPickerSheet(
           title: 'Contacts for "$listName"',
-          contacts: contacts,
-          onDone: (selectedContacts) async {
-            final members = <ListMember>[];
-
-            for (final c in selectedContacts) {
-              final name = c.displayName.trim();
-              if (name.isEmpty) continue;
-
-              final phone =
-                  c.phones.isNotEmpty ? c.phones.first.number.trim() : '';
-              if (phone.isEmpty) continue;
-
-              members.add(ListMember(name: name, phone: phone));
-            }
-
+          contacts: phoneContacts,
+          initialMembers: existingMembers, // ✅ PREPOPULATE
+          onDone: (members) async {
             await _populateList(listId, members);
 
             if (!ctx.mounted) return;
@@ -206,14 +208,27 @@ class _ListScreenState extends State<ListScreen> {
 
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Saved ${members.length} members to "$listName"'),
-              ),
+              SnackBar(content: Text('Saved ${members.length} members to "$listName"')),
             );
           },
         );
       },
     );
+  }
+
+
+  Future<List<ListMember>> _fetchListMembers(String listId) async {
+    final data = await AuthService.instance.api.getListContacts(listID: listId);
+    final raw = (data['contacts'] as List?) ?? const [];
+
+    return raw
+      .whereType<Map<String, dynamic>>()
+      .map((m) => ListMember(
+            name: (m['name'] ?? '').toString(),
+            phone: normalizePhone((m['phone'] ?? '').toString()),
+          ))
+      .where((m) => m.name.trim().isNotEmpty && m.phone.trim().isNotEmpty)
+      .toList();
   }
 
   @override
@@ -350,24 +365,39 @@ class _ListScreenState extends State<ListScreen> {
   }
 }
 
+String normalizePhone(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) return '';
+  final hasPlus = s.startsWith('+');
+  final digitsOnly = s.replaceAll(RegExp(r'[^\d]'), '');
+  if (digitsOnly.isEmpty) return '';
+  return hasPlus ? '+$digitsOnly' : digitsOnly;
+}
+
 class _ContactsPickerSheet extends StatefulWidget {
   const _ContactsPickerSheet({
     required this.title,
     required this.contacts,
+    required this.initialMembers,
     required this.onDone,
   });
 
   final String title;
   final List<Contact> contacts;
-  final Future<void> Function(List<Contact>) onDone;
+  final List<ListMember> initialMembers;
+  final Future<void> Function(List<ListMember>) onDone;
 
   @override
   State<_ContactsPickerSheet> createState() => _ContactsPickerSheetState();
 }
 
+
 class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
   final _search = TextEditingController();
-  final Map<String, Contact> _selectedById = {};
+
+  // Key by normalized phone -> stable, works across sessions
+  late final Map<String, ListMember> _selectedByPhone;
+
   late List<Contact> _filtered;
 
   @override
@@ -375,17 +405,20 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
     super.initState();
     _filtered = widget.contacts;
 
+    _selectedByPhone = {
+      for (final m in widget.initialMembers) m.phone: m,
+    };
+
     _search.addListener(() {
       final q = _search.text.trim().toLowerCase();
       setState(() {
         if (q.isEmpty) {
           _filtered = widget.contacts;
         } else {
-          _filtered =
-              widget.contacts.where((c) {
-                final name = c.displayName.toLowerCase();
-                return name.contains(q);
-              }).toList();
+          _filtered = widget.contacts.where((c) {
+            final name = c.displayName.toLowerCase();
+            return name.contains(q);
+          }).toList();
         }
       });
     });
@@ -400,7 +433,7 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final maxH = MediaQuery.of(context).size.height * 0.75;
-    final members = _selectedById.values.toList();
+    final members = _selectedByPhone.values.toList();
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxH),
@@ -414,20 +447,15 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                   child: Text(
                     widget.title,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                          fontWeight: FontWeight.w700,
+                        ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 TextButton(
-                  onPressed:
-                      members.isEmpty
-                          ? null
-                          : () async => await widget.onDone(members),
-                  child: Text(
-                    members.isEmpty ? 'Done' : 'Done (${members.length})',
-                  ),
+                  onPressed: members.isEmpty ? null : () async => widget.onDone(members),
+                  child: Text(members.isEmpty ? 'Done' : 'Done (${members.length})'),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
@@ -437,14 +465,15 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
             ),
           ),
 
+          // ✅ Upper Members section now uses ListMember
           _MembersSection(
             members: members,
-            onRemove:
-                (c) => setState(() => _selectedById.remove(_contactKey(c))),
+            onRemove: (m) => setState(() => _selectedByPhone.remove(m.phone)),
           ),
 
           const SizedBox(height: 8),
 
+          // Search
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: TextField(
@@ -458,60 +487,57 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
             ),
           ),
 
+          // Contacts list
           Expanded(
-            child:
-                _filtered.isEmpty
-                    ? const Center(child: Text('No contacts found'))
-                    : ListView.separated(
-                      itemCount: _filtered.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, i) {
-                        final c = _filtered[i];
-                        final id = _contactKey(c);
-                        final isSelected = _selectedById.containsKey(id);
+            child: _filtered.isEmpty
+                ? const Center(child: Text('No contacts found'))
+                : ListView.separated(
+                    itemCount: _filtered.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final c = _filtered[i];
 
-                        final subtitle = _bestSubtitle(c);
+                      final name = c.displayName.trim();
+                      final phoneRaw = c.phones.isNotEmpty ? c.phones.first.number : '';
+                      final phone = normalizePhone(phoneRaw);
 
-                        return ListTile(
-                          leading: CircleAvatar(
-                            child: Text(
-                              (c.displayName.isNotEmpty
-                                      ? c.displayName[0]
-                                      : '?')
-                                  .toUpperCase(),
-                            ),
-                          ),
-                          title: Text(
-                            c.displayName.isEmpty
-                                ? 'Unnamed contact'
-                                : c.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle:
-                              subtitle == null
-                                  ? null
-                                  : Text(
-                                    subtitle,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                          trailing:
-                              isSelected
-                                  ? const Icon(Icons.check_circle)
-                                  : const Icon(Icons.add_circle_outline),
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedById.remove(id);
-                              } else {
-                                _selectedById[id] = c;
-                              }
-                            });
-                          },
-                        );
-                      },
-                    ),
+                      final isSelectable = name.isNotEmpty && phone.isNotEmpty;
+                      final isSelected = phone.isNotEmpty && _selectedByPhone.containsKey(phone);
+
+                      final subtitle = (phoneRaw.trim().isNotEmpty)
+                          ? phoneRaw
+                          : (c.emails.isNotEmpty ? c.emails.first.address : null);
+
+                      return ListTile(
+                        enabled: isSelectable,
+                        leading: CircleAvatar(
+                          child: Text((name.isNotEmpty ? name[0] : '?').toUpperCase()),
+                        ),
+                        title: Text(
+                          name.isEmpty ? 'Unnamed contact' : name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: subtitle == null
+                            ? null
+                            : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle)
+                            : const Icon(Icons.add_circle_outline),
+                        onTap: !isSelectable
+                            ? null
+                            : () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedByPhone.remove(phone);
+                                  } else {
+                                    _selectedByPhone[phone] = ListMember(name: name, phone: phone);
+                                  }
+                                });
+                              },
+                      );
+                    },
+                  ),
           ),
 
           const SizedBox(height: 8),
@@ -519,26 +545,14 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
       ),
     );
   }
-
-  String _contactKey(Contact c) {
-    if (c.id.isNotEmpty) return c.id;
-    final phone = c.phones.isNotEmpty ? c.phones.first.number : '';
-    final email = c.emails.isNotEmpty ? c.emails.first.address : '';
-    return '${c.displayName}|$phone|$email';
-  }
-
-  String? _bestSubtitle(Contact c) {
-    if (c.phones.isNotEmpty) return c.phones.first.number;
-    if (c.emails.isNotEmpty) return c.emails.first.address;
-    return null;
-  }
 }
+
 
 class _MembersSection extends StatelessWidget {
   const _MembersSection({required this.members, required this.onRemove});
 
-  final List<Contact> members;
-  final ValueChanged<Contact> onRemove;
+  final List<ListMember> members;
+  final ValueChanged<ListMember> onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -554,9 +568,9 @@ class _MembersSection extends StatelessWidget {
             children: [
               Text(
                 'Members',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
               const SizedBox(height: 8),
               if (members.isEmpty)
@@ -568,15 +582,13 @@ class _MembersSection extends StatelessWidget {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children:
-                      members.map((c) {
-                        final label =
-                            c.displayName.isEmpty ? 'Unnamed' : c.displayName;
-                        return InputChip(
-                          label: Text(label, overflow: TextOverflow.ellipsis),
-                          onDeleted: () => onRemove(c),
-                        );
-                      }).toList(),
+                  children: members.map((m) {
+                    final label = m.name.isEmpty ? 'Unnamed' : m.name;
+                    return InputChip(
+                      label: Text(label, overflow: TextOverflow.ellipsis),
+                      onDeleted: () => onRemove(m),
+                    );
+                  }).toList(),
                 ),
             ],
           ),
@@ -585,6 +597,7 @@ class _MembersSection extends StatelessWidget {
     );
   }
 }
+
 
 class _ListTileCard extends StatelessWidget {
   const _ListTileCard({required this.title, this.onTap, this.onLongPress});

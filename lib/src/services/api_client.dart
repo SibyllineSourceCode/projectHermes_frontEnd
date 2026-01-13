@@ -102,4 +102,7 @@ class ApiClient {
     required String listID,
     required List<Map<String, dynamic>> contacts,
   }) => _authedPost(('/lists/$listID/contacts'), {'contacts': contacts});
+
+  Future<Map<String, dynamic>> getListContacts({required String listID}) =>
+    _authedGet('/lists/$listID/contacts');
 }
