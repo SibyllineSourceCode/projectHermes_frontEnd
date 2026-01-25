@@ -32,6 +32,22 @@ class ApiClient {
     return _decode(res);
   }
 
+  Future<Map<String, dynamic>> _authedPatch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
+    final res = await http.patch(
+      Uri.parse('$baseUrl$path'),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(body),
+    );
+    return _decode(res);
+  }
+
   Map<String, dynamic> _decode(http.Response res) {
     final data =
         res.body.isEmpty
@@ -105,4 +121,12 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getListContacts({required String listID}) =>
     _authedGet('/lists/$listID/contacts');
+
+  Future<Map<String, dynamic>> renameList({required String listID, required String title
+  }) => _authedPatch('/lists/$listID', {'title': title});
+
+  Future<Map<String, dynamic>> setActiveList({required String listId, required String title
+  }) => _authedPost('/lists/active', {'listId': listId, 'title': title});
+
+  Future<Map<String, dynamic>> getActiveList() => _authedGet('/lists/active');
 }

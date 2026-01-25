@@ -4,7 +4,7 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class ListItem {
-  final String id; // Firestore doc id (UUID)
+  final String id;
   final String title;
 
   const ListItem({required this.id, required this.title});
@@ -39,13 +39,22 @@ class ListScreen extends StatefulWidget {
 
 class _ListScreenState extends State<ListScreen> {
   List<ListItem> _lists = [];
+  String? _activeListId;
+
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadLists();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await Future.wait([
+      _loadLists(),
+      _loadActiveList(),
+    ]);
   }
 
   Future<void> _loadLists() async {
@@ -53,12 +62,10 @@ class _ListScreenState extends State<ListScreen> {
       final data = await AuthService.instance.api.getLists();
       final raw = (data['lists'] as List?) ?? const [];
 
-      final items =
-          raw.map<ListItem>((e) {
-            if (e is Map<String, dynamic>) return ListItem.fromJson(e);
-            // Fallback: if backend ever returns strings, keep UI working
-            return ListItem(id: '', title: e.toString());
-          }).toList();
+      final items = raw.map<ListItem>((e) {
+        if (e is Map<String, dynamic>) return ListItem.fromJson(e);
+        return ListItem(id: '', title: e.toString());
+      }).toList();
 
       if (!mounted) return;
       setState(() {
@@ -75,6 +82,38 @@ class _ListScreenState extends State<ListScreen> {
     }
   }
 
+  Future<void> _loadActiveList() async {
+    try {
+      final data = await AuthService.instance.api.getActiveList();
+      // Expecting: { ok: true, active: { listId: "...", title: "..." } } (or null)
+      final active = data['active'];
+      final id = (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
+
+      if (!mounted) return;
+      setState(() => _activeListId = (id != null && id.isNotEmpty) ? id : null);
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+  Future<void> _setActiveList(ListItem item) async {
+    final prev = _activeListId;
+    setState(() => _activeListId = item.id);
+
+    try {
+      await AuthService.instance.api.setActiveList(
+        listId: item.id,
+        title: item.title,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _activeListId = prev);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Set active list failed: $e')),
+      );
+    }
+  }
+
   Future<void> _addList(String title) async {
     setState(() {
       _loading = true;
@@ -83,7 +122,7 @@ class _ListScreenState extends State<ListScreen> {
 
     try {
       await AuthService.instance.api.postLists(title: title);
-      await _loadLists();
+      await _bootstrap();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -104,7 +143,7 @@ class _ListScreenState extends State<ListScreen> {
         listID: listId,
         contacts: members.map((m) => m.toJson()).toList(),
       );
-      await _loadLists();
+      await _bootstrap();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -119,30 +158,23 @@ class _ListScreenState extends State<ListScreen> {
 
     final created = await showDialog<String>(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Create new list'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                labelText: 'List name',
-                hintText: 'e.g., Security Logs',
-              ),
-              onSubmitted: (_) => Navigator.pop(ctx, controller.text),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, controller.text),
-                child: const Text('Create'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create new list'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'List name',
+            hintText: 'e.g., Security Logs',
           ),
+          onSubmitted: (_) => Navigator.pop(ctx, controller.text),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Create')),
+        ],
+      ),
     );
 
     final title = (created ?? '').trim();
@@ -165,19 +197,16 @@ class _ListScreenState extends State<ListScreen> {
       return;
     }
 
-    // Fetch phone contacts
     final phoneContacts = await FlutterContacts.getContacts(
       withProperties: true,
       withPhoto: false,
     );
     if (!mounted) return;
 
-    // Fetch existing members from backend (Firebase)
     List<ListMember> existingMembers = [];
     try {
       existingMembers = await _fetchListMembers(listId);
     } catch (e) {
-      // Don’t block opening the sheet; just show empty members if fetch fails
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not load existing members: $e')),
@@ -199,7 +228,7 @@ class _ListScreenState extends State<ListScreen> {
         return _ContactsPickerSheet(
           title: 'Contacts for "$listName"',
           contacts: phoneContacts,
-          initialMembers: existingMembers, // ✅ PREPOPULATE
+          initialMembers: existingMembers,
           onDone: (members) async {
             await _populateList(listId, members);
 
@@ -216,19 +245,18 @@ class _ListScreenState extends State<ListScreen> {
     );
   }
 
-
   Future<List<ListMember>> _fetchListMembers(String listId) async {
     final data = await AuthService.instance.api.getListContacts(listID: listId);
     final raw = (data['contacts'] as List?) ?? const [];
 
     return raw
-      .whereType<Map<String, dynamic>>()
-      .map((m) => ListMember(
-            name: (m['name'] ?? '').toString(),
-            phone: normalizePhone((m['phone'] ?? '').toString()),
-          ))
-      .where((m) => m.name.trim().isNotEmpty && m.phone.trim().isNotEmpty)
-      .toList();
+        .whereType<Map<String, dynamic>>()
+        .map((m) => ListMember(
+              name: (m['name'] ?? '').toString(),
+              phone: normalizePhone((m['phone'] ?? '').toString()),
+            ))
+        .where((m) => m.name.trim().isNotEmpty && m.phone.trim().isNotEmpty)
+        .toList();
   }
 
   @override
@@ -238,62 +266,56 @@ class _ListScreenState extends State<ListScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Lists'), centerTitle: true),
       body: SafeArea(
-        child:
-            _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
                 ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Failed to load lists: $_error'),
-                      const SizedBox(height: 8),
-                      FilledButton(
-                        onPressed: _loadLists,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                )
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Failed to load lists: $_error'),
+                        const SizedBox(height: 8),
+                        FilledButton(onPressed: _bootstrap, child: const Text('Retry')),
+                      ],
+                    ),
+                  )
                 : RefreshIndicator(
-                  onRefresh: _loadLists,
-                  child: Padding(
-                    padding: EdgeInsets.all(padding),
-                    child: GridView.builder(
-                      itemCount: _lists.length + 1,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 1.1,
-                          ),
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          return _AddListTile(onTap: _showCreateListDialog);
-                        }
+                    onRefresh: _bootstrap,
+                    child: Padding(
+                      padding: EdgeInsets.all(padding),
+                      child: GridView.builder(
+                        itemCount: _lists.length + 1,
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 1.1,
+                        ),
+                        itemBuilder: (context, index) {
+                          if (index == 0) {
+                            return _AddListTile(onTap: _showCreateListDialog);
+                          }
 
-                        final item = _lists[index - 1];
+                          final item = _lists[index - 1];
+                          final isActive = item.id.isNotEmpty && item.id == _activeListId;
 
-                        return _ListTileCard(
-                          title: item.title,
-                          onTap:
-                              () => _openContactsSheet(
-                                listId: item.id,
-                                listName: item.title,
-                              ),
-                          onLongPress:
-                              () => _showListActions(context, item, index - 1),
-                        );
-                      },
+                          return _ListTileCard(
+                            title: item.title,
+                            isActive: isActive,
+                            onTap: () => _openContactsSheet(listId: item.id, listName: item.title),
+                            onLongPress: () => _showListActions(context, item, index - 1),
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
       ),
     );
   }
 
   void _showListActions(BuildContext context, ListItem item, int idx) {
+    final isActive = item.id.isNotEmpty && item.id == _activeListId;
+
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -303,6 +325,18 @@ class _ListScreenState extends State<ListScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                leading: Icon(isActive ? Icons.check_circle : Icons.star_outline),
+                title: Text(isActive ? 'Active list' : 'Set as active list'),
+                enabled: !isActive && item.id.isNotEmpty,
+                onTap: (!isActive && item.id.isNotEmpty)
+                    ? () async {
+                        Navigator.pop(ctx);
+                        await _setActiveList(item);
+                      }
+                    : null,
+              ),
+              const Divider(height: 1),
+              ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('Rename'),
                 onTap: () async {
@@ -311,30 +345,20 @@ class _ListScreenState extends State<ListScreen> {
                   final controller = TextEditingController(text: item.title);
                   final newName = await showDialog<String>(
                     context: context,
-                    builder:
-                        (_) => AlertDialog(
-                          title: const Text('Rename list'),
-                          content: TextField(
-                            controller: controller,
-                            autofocus: true,
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (v) => Navigator.pop(context, v),
-                            decoration: const InputDecoration(
-                              hintText: 'Enter new name',
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Cancel'),
-                            ),
-                            FilledButton(
-                              onPressed:
-                                  () => Navigator.pop(context, controller.text),
-                              child: const Text('Save'),
-                            ),
-                          ],
-                        ),
+                    builder: (_) => AlertDialog(
+                      title: const Text('Rename list'),
+                      content: TextField(
+                        controller: controller,
+                        autofocus: true,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (v) => Navigator.pop(context, v),
+                        decoration: const InputDecoration(hintText: 'Enter new name'),
+                      ),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                        FilledButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Save')),
+                      ],
+                    ),
                   );
 
                   if (!mounted) return;
@@ -342,8 +366,23 @@ class _ListScreenState extends State<ListScreen> {
                   final trimmed = (newName ?? '').trim();
                   if (trimmed.isEmpty) return;
 
-                  // Local UI update. If you have a backend rename endpoint, call it here.
+                  // optimistic UI
+                  final prev = _lists[idx];
                   setState(() => _lists[idx] = item.copyWith(title: trimmed));
+
+                  try {
+                    await AuthService.instance.api.renameList(
+                      listID: item.id,
+                      title: trimmed,
+                    );
+                    await _bootstrap();
+                  } catch (e) {
+                    if (!mounted) return;
+                    setState(() => _lists[idx] = prev);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Rename failed: $e')),
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -351,8 +390,6 @@ class _ListScreenState extends State<ListScreen> {
                 title: const Text('Delete'),
                 onTap: () {
                   Navigator.pop(ctx);
-
-                  // Local UI update. If you have a backend delete endpoint, call it here.
                   setState(() => _lists.removeAt(idx));
                 },
               ),
@@ -374,6 +411,11 @@ String normalizePhone(String raw) {
   return hasPlus ? '+$digitsOnly' : digitsOnly;
 }
 
+/// =====================
+/// CONTACT PICKER SHEET
+/// (unchanged from your working version)
+/// =====================
+
 class _ContactsPickerSheet extends StatefulWidget {
   const _ContactsPickerSheet({
     required this.title,
@@ -391,13 +433,10 @@ class _ContactsPickerSheet extends StatefulWidget {
   State<_ContactsPickerSheet> createState() => _ContactsPickerSheetState();
 }
 
-
 class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
   final _search = TextEditingController();
 
-  // Key by normalized phone -> stable, works across sessions
   late final Map<String, ListMember> _selectedByPhone;
-
   late List<Contact> _filtered;
 
   @override
@@ -405,9 +444,7 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
     super.initState();
     _filtered = widget.contacts;
 
-    _selectedByPhone = {
-      for (final m in widget.initialMembers) m.phone: m,
-    };
+    _selectedByPhone = {for (final m in widget.initialMembers) m.phone: m};
 
     _search.addListener(() {
       final q = _search.text.trim().toLowerCase();
@@ -446,15 +483,13 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 TextButton(
-                  onPressed: members.isEmpty ? null : () async => widget.onDone(members),
+                  onPressed: () async => widget.onDone(members),
                   child: Text(members.isEmpty ? 'Done' : 'Done (${members.length})'),
                 ),
                 IconButton(
@@ -464,16 +499,11 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
               ],
             ),
           ),
-
-          // ✅ Upper Members section now uses ListMember
           _MembersSection(
             members: members,
             onRemove: (m) => setState(() => _selectedByPhone.remove(m.phone)),
           ),
-
           const SizedBox(height: 8),
-
-          // Search
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: TextField(
@@ -486,8 +516,6 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
               ),
             ),
           ),
-
-          // Contacts list
           Expanded(
             child: _filtered.isEmpty
                 ? const Center(child: Text('No contacts found'))
@@ -496,7 +524,6 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final c = _filtered[i];
-
                       final name = c.displayName.trim();
                       final phoneRaw = c.phones.isNotEmpty ? c.phones.first.number : '';
                       final phone = normalizePhone(phoneRaw);
@@ -510,20 +537,14 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
 
                       return ListTile(
                         enabled: isSelectable,
-                        leading: CircleAvatar(
-                          child: Text((name.isNotEmpty ? name[0] : '?').toUpperCase()),
-                        ),
+                        leading: CircleAvatar(child: Text((name.isNotEmpty ? name[0] : '?').toUpperCase())),
                         title: Text(
                           name.isEmpty ? 'Unnamed contact' : name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: subtitle == null
-                            ? null
-                            : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        trailing: isSelected
-                            ? const Icon(Icons.check_circle)
-                            : const Icon(Icons.add_circle_outline),
+                        subtitle: subtitle == null ? null : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: isSelected ? const Icon(Icons.check_circle) : const Icon(Icons.add_circle_outline),
                         onTap: !isSelectable
                             ? null
                             : () {
@@ -539,14 +560,12 @@ class _ContactsPickerSheetState extends State<_ContactsPickerSheet> {
                     },
                   ),
           ),
-
           const SizedBox(height: 8),
         ],
       ),
     );
   }
 }
-
 
 class _MembersSection extends StatelessWidget {
   const _MembersSection({required this.members, required this.onRemove});
@@ -566,18 +585,10 @@ class _MembersSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Members',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
+              Text('Members', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               if (members.isEmpty)
-                Text(
-                  'Tap a contact below to add them.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                )
+                Text('Tap a contact below to add them.', style: Theme.of(context).textTheme.bodyMedium)
               else
                 Wrap(
                   spacing: 8,
@@ -598,18 +609,26 @@ class _MembersSection extends StatelessWidget {
   }
 }
 
-
 class _ListTileCard extends StatelessWidget {
-  const _ListTileCard({required this.title, this.onTap, this.onLongPress});
+  const _ListTileCard({
+    required this.title,
+    required this.isActive,
+    this.onTap,
+    this.onLongPress,
+  });
 
   final String title;
+  final bool isActive;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.surface;
+    final activeTint = Colors.lightBlue.withOpacity(0.18);
+
     return Material(
-      color: Theme.of(context).colorScheme.surface,
+      color: isActive ? activeTint : base,
       elevation: 2,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
@@ -618,16 +637,30 @@ class _ListTileCard extends StatelessWidget {
         onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Align(
-            alignment: Alignment.bottomLeft,
-            child: Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
+          child: Stack(
+            children: [
+              Align(
+                alignment: Alignment.bottomLeft,
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (isActive)
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.lightBlue.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text('Active', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -648,11 +681,7 @@ class _AddListTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Center(
-          child: Icon(
-            Icons.add,
-            size: 48,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-          ),
+          child: Icon(Icons.add, size: 48, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
         ),
       ),
     );

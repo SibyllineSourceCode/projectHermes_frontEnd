@@ -15,6 +15,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import '../../screens/list_screen.dart';
+import '../../widgets/active_list_pill.dart';
+import '../../services/auth_service.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -29,10 +31,33 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   Uint8List? screenshotBytes;
   bool isThisPageVisibe = true;
 
+  String? _activeListId;
+  String? _activeListTitle;
+
+  Future<void> _loadActiveList() async {
+    try {
+      final data = await AuthService.instance.api.getActiveList();
+      final active = data['active'];
+
+      final id = (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
+      final title = (active is Map<String, dynamic>) ? active['title']?.toString() : null;
+
+      if (!mounted) return;
+      setState(() {
+        _activeListId = (id != null && id.isNotEmpty) ? id : null;
+        _activeListTitle = (title != null && title.trim().isNotEmpty) ? title.trim() : null;
+      });
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+
   @override
   void initState() {
     cameraBloc = BlocProvider.of<CameraBloc>(context);
     WidgetsBinding.instance.addObserver(this);
+    _loadActiveList();
     super.initState();
   }
 
@@ -125,6 +150,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   final bool isReady = state is CameraReady;
   final bool disableButtons = !(isReady && !state.isRecordingVideo);
 
+  final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
+  final pillTitle = hasActiveList ? (_activeListTitle ?? 'Active list') : 'No active list';
+
   // Get the controller once
   final controller = cameraBloc.getController();
 
@@ -195,7 +223,27 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 ),
               ),
             ),
-
+            // ---- Active List pill (above record button) ----
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 30 + 90 + 12, // bottomControls(30) + max record btn size(90) + gap(12)
+              child: Visibility(
+                visible: !disableButtons, // hide if camera not ready
+                child: Center(
+                  child: ActiveListPill(
+                    title: pillTitle,
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ListScreen()),
+                      );
+                      await _loadActiveList(); // refresh when returning
+                    },
+                  ),
+                ),
+              ),
+            ),
             // ---- Bottom controls (unchanged structure) ----
             Positioned(
               bottom: 30,
@@ -235,6 +283,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
+                    // -------------------------------List Screen Nav button------------------------
                     Positioned(
                       left: 0,
                       child: Visibility(
@@ -243,13 +292,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                           // RECORD DURATION BUTTON - changed to Lists button
                           builder: (context, localSetState) {
                             return GestureDetector(
-                              onTap: () {
-                                Navigator.push(
+                              onTap: () async {
+                                await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) => const ListScreen(),
+                                    builder: (_) => const ListScreen(),
                                   ),
                                 );
+                                await _loadActiveList();
                                 // If you later want to cycle duration limits, restore that code here.
                               },
                               child: CircleAvatar(
