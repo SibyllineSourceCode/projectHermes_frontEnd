@@ -17,6 +17,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import '../../screens/list_screen.dart';
 import '../../widgets/active_list_pill.dart';
 import '../../services/auth_service.dart';
+import '../../utils/sos_utils.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -63,10 +64,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    // Remove both of these lines:
-    // cameraBloc.add(CameraReset());
-    // cameraBloc.close();
-
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -132,15 +129,34 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
 
   void startRecording() async {
+    // 1) grab screenshot early for smooth UX
     try {
-      takeCameraScreenshot(key: screenshotKey).then((value) {
-        screenshotBytes = value;
-      });
-    } catch (e) {
-      rethrow;
+      final bytes = await takeCameraScreenshot(key: screenshotKey);
+      if (mounted) setState(() => screenshotBytes = bytes);
+    } catch (_) {
+      // ignore screenshot errors
     }
+
+    // 2) send SOS before recording/RTC
+    // Only if there is an active list
+    final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
+    if (hasActiveList) {
+      await SosUtils.sendSosForActiveList(
+        activeListId: _activeListId!,
+        activeListTitle: _activeListTitle ?? 'Active list',
+        fromDisplayName: 'User', // TODO: pull from your profile/auth user
+        // customMessage: "I need help now. Please join.",
+        extraContext: {
+          // optionally add gps coords, etc.
+          // 'lat': ..., 'lng': ...
+        },
+      );
+    }
+
+    // 3) start recording as before
     cameraBloc.add(CameraRecordingStart());
   }
+
 
   void stopRecording() async {
     cameraBloc.add(CameraRecordingStop());
@@ -270,10 +286,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                           child: IconButton(
                             onPressed: () async {
                               try {
-                                screenshotBytes = await takeCameraScreenshot(key: screenshotKey);
-                                if (context.mounted) {
-                                  cameraBloc.add(CameraSwitch());
-                                }
+                                final bytes = await takeCameraScreenshot(key: screenshotKey);
+                                if (!mounted) return;
+                                setState(() => screenshotBytes = bytes);
+                                cameraBloc.add(CameraSwitch());
                               } catch (_) {
                                 // screenshot error - ignore for now
                               }

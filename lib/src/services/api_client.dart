@@ -62,6 +62,7 @@ class ApiClient {
     required String email,
     required String password,
     required String username,
+    required String phoneE164,
     String? fcmToken,
     String? platform,
   }) async {
@@ -72,6 +73,7 @@ class ApiClient {
         'email': email,
         'password': password,
         'username': username,
+        'phone': phoneE164,
         'fcmToken': fcmToken,
         'platform': platform,
       }),
@@ -129,4 +131,21 @@ class ApiClient {
   }) => _authedPost('/lists/active', {'listId': listId, 'title': title});
 
   Future<Map<String, dynamic>> getActiveList() => _authedGet('/lists/active');
+
+  Future<Map<String, dynamic>> getActiveListRecipients({required String listId
+  }) => _authedGet('/lists/$listId/recipients');
+
+  Future<Map<String, dynamic>> createSos({
+    required String listId,
+    required String listTitle,
+    required String message,
+    required List<Map<String, dynamic>> recipients,
+    required Map<String, dynamic> extraContext,
+  }) => _authedPost('/sos/create', {
+    'listId': listId,
+    'listTitle': listTitle,
+    'message': message,
+    'recipients': recipients,
+    'extra': extraContext,
+  });
 }

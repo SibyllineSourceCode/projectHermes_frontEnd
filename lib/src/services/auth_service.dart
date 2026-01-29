@@ -19,7 +19,7 @@ class AuthService {
   User? get currentUser => _auth.currentUser;
 
   // Backend signup -> customToken -> sign in
-  Future<void> register({required String email, required String password, required String username}) async {
+  Future<void> register({required String email, required String password, required String username, required String phoneE164}) async {
     await FirebaseMessaging.instance.requestPermission();
     final fcmToken = await FirebaseMessaging.instance.getToken();   
     final platform = Platform.isAndroid
@@ -27,7 +27,7 @@ class AuthService {
         : Platform.isIOS
             ? 'ios'
             : 'unknown';
-    final customToken = await api.signup(email: email, password: password, username: username, fcmToken: fcmToken, platform: platform);
+    final customToken = await api.signup(email: email, password: password, username: username, fcmToken: fcmToken, phoneE164: phoneE164, platform: platform);
     await _auth.signInWithCustomToken(customToken);
   }
 
