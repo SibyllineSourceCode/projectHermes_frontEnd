@@ -121,29 +121,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return '+$ccDigits$digits';
   }
 
-  Future<void> _handleRegister() async {
-    if (_inflight != null) return; // guard against double tap/submit
+  Future<void> _handleRegister({
+    required String username,
+    required String email,
+    required String password,
+    required String phoneE164,
+  }) async {
+    if (_inflight != null) return;
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _busy = true);
-    _inflight = _doRegister().whenComplete(() {
+    _inflight = _doRegister(
+      username: username,
+      email: email,
+      password: password,
+      phoneE164: phoneE164,
+    ).whenComplete(() {
       _inflight = null;
       if (mounted) setState(() => _busy = false);
     });
   }
 
-  Future<void> _doRegister() async {
-    try {
-      final phoneE164 = _composePhoneE164();
 
-      // NOTE: This just *collects* the phone number. Verification should happen next
-      // (Firebase Phone Auth) before you trust/index it on the backend.
+  Future<void> _doRegister({
+    required String username,
+    required String email,
+    required String password,
+    required String phoneE164,
+  }) async {
+    try {
+      // Optional: add a debug print so you can verify nothing is empty
+      debugPrint('Register payload: u="$username" e="$email" pLen=${password.length} phone="$phoneE164"');
+      print('Register payload: u="$username" e="$email" pLen=${password.length} phone="$phoneE164"');
+
       await AuthService.instance.register(
-        email: _email.text.trim(),
-        password: _password.text,
-        username: _username.text.trim(),
-        // If your register() doesn't accept this yet, add it in the service signature
-        // and send it to your backend as a "pendingPhoneE164" or similar.
+        email: email,
+        password: password,
+        username: username,
         phoneE164: phoneE164,
       );
 
@@ -151,11 +165,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
-      // If another concurrent request already signed us in, swallow stale error.
       if (AuthService.instance.currentUser != null) {
-        if (mounted) {
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        }
+        if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
         return;
       }
       if (!mounted) return;
@@ -208,7 +219,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     // For now just debug:
     debugPrint('User entered SMS code: $code');
-    _handleRegister();
+    await _handleRegister(
+      username: username,
+      email: email,
+      password: password,
+      phoneE164: phone,
+    );
 
   }
 

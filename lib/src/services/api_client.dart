@@ -73,7 +73,7 @@ class ApiClient {
         'email': email,
         'password': password,
         'username': username,
-        'phone': phoneE164,
+        'phoneE164': phoneE164,
         'fcmToken': fcmToken,
         'platform': platform,
       }),
