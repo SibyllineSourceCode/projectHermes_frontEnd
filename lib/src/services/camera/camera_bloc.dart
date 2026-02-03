@@ -89,8 +89,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   ) async {
     if (!isRecording()) {
       try {
-        emit(CameraReady(isRecordingVideo: true));
         await _startRecording();
+        recordingDuration.value = 0; // ensure clean start
+        _startTimer(); // <-- start once here
+        emit(CameraReady(isRecordingVideo: true));
       } catch (e) {
         await _reInitialize();
         emit(CameraReady(isRecordingVideo: false));
@@ -156,9 +158,11 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   // Handle CameraDisable event when camera is not in use
   void _onCameraDisable(CameraDisable event, Emitter<CameraState> emit) async {
     if (isInitialized() && isRecording()) {
-      // if app minimize while recording then save the the video then disable the camera
-      add(CameraRecordingStop());
-      await Future.delayed(const Duration(seconds: 2));
+      try {
+        await _stopRecording();
+      } catch (_) {
+        // ignore, we're disabling anyway
+      }
     }
     await _disposeCamera();
     emit(CameraInitial());
@@ -174,14 +178,16 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   }
 
   // Start the recording timer
-  void _startTimer() async {
+  void _startTimer() {
+    if (recordingTimer?.isActive ?? false) return; // guard
     recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       recordingDuration.value++;
-      if (recordingDuration.value == recordDurationLimit) {
+      if (recordingDuration.value >= recordDurationLimit) {
         add(CameraRecordingStop());
       }
     });
   }
+
 
   // Stop the recording timer and reset the duration
   void _stopTimerAndResetDuration() async {
@@ -236,11 +242,6 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
         lensDirection: currentLensDirection,
       );
       await _cameraController?.initialize();
-      _cameraController?.addListener(() {
-        if (_cameraController!.value.isRecordingVideo) {
-          _startTimer();
-        }
-      });
     } on CameraException catch (error) {
       return Future.error(error);
     } finally {
@@ -264,7 +265,6 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   }
 
   Future<void> _disposeCamera() async {
-    _cameraController?.removeListener(() {}); // this no-op isn't needed, but ok
     await _cameraController?.dispose();
     _stopTimerAndResetDuration();
     _cameraController = null; // <-- important: DO NOT create a new controller here

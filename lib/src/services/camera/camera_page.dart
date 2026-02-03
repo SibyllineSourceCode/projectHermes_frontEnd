@@ -1,6 +1,6 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
-
 import 'package:camera/camera.dart';
 import 'package:project_hermes_front_end/src/screens/settings_screen.dart';
 import 'camera_bloc.dart';
@@ -8,7 +8,6 @@ import 'camera_state.dart';
 import '../../enums/camera_enums.dart';
 import '../../utils/screenshot_utils.dart';
 import '../../widgets/animated_bar.dart';
-import '../../screens/playback_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -17,7 +16,8 @@ import 'package:visibility_detector/visibility_detector.dart';
 import '../../screens/list_screen.dart';
 import '../../widgets/active_list_pill.dart';
 import '../../services/auth_service.dart';
-import '../../utils/sos_utils.dart';
+import 'package:uuid/uuid.dart';
+import '../../screens/my_videos_screen.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -28,12 +28,21 @@ class CameraPage extends StatefulWidget {
 
 class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   late CameraBloc cameraBloc;
+  final List<File> _savedVideos = [];
   final GlobalKey screenshotKey = GlobalKey();
   Uint8List? screenshotBytes;
   bool isThisPageVisibe = true;
 
   String? _activeListId;
   String? _activeListTitle;
+
+  final Uuid _uuid = const Uuid();
+
+  String? sessionId;
+  DateTime? sessionStartTime;
+
+  bool sosInitializing = false;   // UI state
+  bool sosLive = false;           // becomes true after room ready
 
   Future<void> _loadActiveList() async {
     try {
@@ -100,12 +109,25 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   void _cameraBlocListener(BuildContext context, CameraState state) {
     if (state is CameraRecordingSuccess) {
-      // Navigate to the VideoPage when video recording is successful
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => VideoPage(videoFile: state.file)),
+      // Save locally (we already have the file path) and DO NOT navigate
+      setState(() {
+        _savedVideos.add(state.file);
+        sosInitializing = false; // optional: SOS ended
+        sosLive = false;         // optional: SOS ended
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black45,
+          duration: Duration(milliseconds: 1200),
+          content: Text(
+            'Saved to My Videos.',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
       );
+
     } else if (state is CameraReady && state.hasRecordingError) {
-      // Show a snackbar when there is a recording error (less than 2 seconds)
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.black45,
@@ -119,6 +141,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     }
   }
 
+
   void _handleVisibilityChanged(VisibilityInfo info) {
     final nowVisible = info.visibleFraction > 0.0;
     if (nowVisible == isThisPageVisibe) return; // avoid spamming
@@ -129,7 +152,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
 
   void startRecording() async {
-    // 1) grab screenshot early for smooth UX
+    // -1) grab screenshot early for smooth UX
     try {
       final bytes = await takeCameraScreenshot(key: screenshotKey);
       if (mounted) setState(() => screenshotBytes = bytes);
@@ -137,23 +160,22 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       // ignore screenshot errors
     }
 
-    // 2) send SOS before recording/RTC
-    // Only if there is an active list
-    final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
-    if (hasActiveList) {
-      await SosUtils.sendSosForActiveList(
-        activeListId: _activeListId!,
-        activeListTitle: _activeListTitle ?? 'Active list',
-        fromDisplayName: 'User', // TODO: pull from your profile/auth user
-        // customMessage: "I need help now. Please join.",
-        extraContext: {
-          // optionally add gps coords, etc.
-          // 'lat': ..., 'lng': ...
-        },
-      );
+    // 0) PRE-FLIGHT SESSION SETUP
+    sessionId = _uuid.v4();                 // globally unique session key
+    sessionStartTime = DateTime.now().toUtc(); // use UTC for backend alignment
+
+    if (mounted) {
+      setState(() {
+        sosInitializing = true;  // show spinner / "Starting SOS..."
+        sosLive = false;
+      });
     }
 
-    // 3) start recording as before
+    debugPrint("SOS PRE-FLIGHT");
+    debugPrint("Session ID: $sessionId");
+    debugPrint("Start Time (UTC): $sessionStartTime");
+
+    // 1) Start local recording
     cameraBloc.add(CameraRecordingStart());
   }
 
@@ -217,6 +239,30 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             // Error overlay (on top)
             if (state is CameraError) errorWidget(state),
 
+            //----- Top Left My Videos Screen
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 12,
+              left: 12,
+              child: Visibility(
+                visible: !disableButtons,
+                child: CircleAvatar(
+                  backgroundColor: Colors.white.withOpacity(0.5),
+                  radius: 25,
+                  child: IconButton(
+                    tooltip: 'My Videos',
+                    icon: const Icon(Icons.video_library, color: Colors.black, size: 28),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => MyVideosScreen(videos: _savedVideos),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
             // ---- Top-right Settings button (outside bottom control box) ----
             Positioned(
               top: MediaQuery.of(context).padding.top + 12,
