@@ -105,42 +105,52 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     CameraRecordingStop event,
     Emitter<CameraState> emit,
   ) async {
-    if (isRecording()) {
-      // Check if the recorded video duration is less than 3 seconds to prevent
-      // potential issues with very short videos resulting in corrupt files.
-      bool hasRecordingLimitError = recordingDuration.value < 2 ? true : false;
+    if (!isRecording()) return;
+
+    final hasRecordingLimitError = recordingDuration.value < 2;
+
+    // Tell UI we are stopping and temporarily disable the record button
+    emit(
+      CameraReady(
+        isRecordingVideo: false,
+        hasRecordingError: hasRecordingLimitError,
+        decativateRecordButton: true,
+      ),
+    );
+
+    try {
+      final videoFile = await _stopRecording();
+
+      if (hasRecordingLimitError) {
+        // Too short: do NOT save / do NOT emit success
+        await Future.delayed(const Duration(milliseconds: 1500));
+        emit(
+          CameraReady(
+            isRecordingVideo: false,
+            hasRecordingError: false,
+            decativateRecordButton: false,
+          ),
+        );
+        return;
+      }
+
+      // Valid recording: emit success so listener can save/copy it
+      emit(CameraRecordingSuccess(file: videoFile));
+
+      // IMPORTANT: immediately return to ready state so preview doesn't get stuck
       emit(
         CameraReady(
           isRecordingVideo: false,
-          hasRecordingError: hasRecordingLimitError,
-          decativateRecordButton: true,
+          hasRecordingError: false,
+          decativateRecordButton: false,
         ),
       );
-      File? videoFile;
-      try {
-        videoFile =
-            await _stopRecording(); // Stop video recording and get the recorded video file
-        if (hasRecordingLimitError) {
-          await Future.delayed(
-            const Duration(milliseconds: 1500),
-            () {},
-          ); // To prevent rapid consecutive clicks, we introduce a debounce delay of 2 seconds,
-          emit(
-            CameraReady(
-              isRecordingVideo: false,
-              hasRecordingError: false,
-              decativateRecordButton: false,
-            ),
-          );
-        } else {
-          emit(CameraRecordingSuccess(file: videoFile));
-        }
-      } catch (e) {
-        await _reInitialize(); // On Camera Exception, initialize the camera again
-        emit(CameraReady(isRecordingVideo: false));
-      }
+    } catch (e) {
+      await _reInitialize();
+      emit(CameraReady(isRecordingVideo: false));
     }
   }
+
 
   // Handle CameraEnable event on app resume
   void _onCameraEnable(CameraEnable event, Emitter<CameraState> emit) async {

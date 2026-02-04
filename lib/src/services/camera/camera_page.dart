@@ -18,6 +18,8 @@ import '../../widgets/active_list_pill.dart';
 import '../../services/auth_service.dart';
 import 'package:uuid/uuid.dart';
 import '../../screens/my_videos_screen.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -62,12 +64,32 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _loadSavedVideosFromDisk() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
+    if (!await videosDir.exists()) return;
+
+    final files = videosDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.toLowerCase().endsWith('.mp4'))
+        .toList()
+      ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+    if (!mounted) return;
+    setState(() {
+      _savedVideos
+        ..clear()
+        ..addAll(files);
+    });
+  }
 
   @override
   void initState() {
     cameraBloc = BlocProvider.of<CameraBloc>(context);
     WidgetsBinding.instance.addObserver(this);
     _loadActiveList();
+    _loadSavedVideosFromDisk();
     super.initState();
   }
 
@@ -107,11 +129,36 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     );
   }
 
-  void _cameraBlocListener(BuildContext context, CameraState state) {
+  Future<File> _saveToAppDirectory(File recorded, String sessionId) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
+    if (!await videosDir.exists()) await videosDir.create(recursive: true);
+
+    final targetPath = p.join(videosDir.path, '$sessionId.mp4');
+
+    try {
+      return await recorded.rename(targetPath); // move
+    } catch (_) {
+      final copied = await recorded.copy(targetPath);
+      // optional: best-effort cleanup of original
+      try { await recorded.delete(); } catch (_) {}
+      return copied;
+    }
+  }
+
+
+  void _cameraBlocListener(BuildContext context, CameraState state) async {
+
     if (state is CameraRecordingSuccess) {
       // Save locally (we already have the file path) and DO NOT navigate
+      final sid = sessionId ?? const Uuid().v4();
+      final savedFile = await _saveToAppDirectory(state.file, sid);
+
+      if (!mounted) return;
+
       setState(() {
-        _savedVideos.add(state.file);
+        final already = _savedVideos.any((f) => f.path == savedFile.path);
+        if (!already) _savedVideos.add(savedFile);
         sosInitializing = false; // optional: SOS ended
         sosLive = false;         // optional: SOS ended
       });
