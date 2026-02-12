@@ -27,6 +27,14 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   CameraController? getController() => _cameraController;
   bool isInitialized() => _cameraController?.value.isInitialized ?? false;
   bool isRecording() => _cameraController?.value.isRecordingVideo ?? false;
+  
+  //........ Members ..........
+
+  Timer? _segmentTimer;
+  bool _segmentedMode = false;
+  bool _segmentBusy = false;
+  int _segmentIndex = 0;
+  int _chunkSeconds = 4;
 
   //setters
   set setRecordDurationLimit(int val) {
@@ -43,6 +51,8 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     on<CameraRecordingStop>(_onCameraRecordingStop);
     on<CameraEnable>(_onCameraEnable);
     on<CameraDisable>(_onCameraDisable);
+    on<CameraSegmentedStart>(_onSegmentedStart);
+    on<CameraSegmentedStop>(_onSegmentedStop);
   }
 
   // ...................... event handler ..........................
@@ -77,6 +87,11 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   // Handle CameraSwitch event
   void _onCameraSwitch(CameraSwitch event, Emitter<CameraState> emit) async {
+    //stop segmented loop if active
+    if (_segmentedMode) {
+      add(const CameraSegmentedStop());
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
     emit(CameraInitial());
     await _switchCamera();
     emit(CameraReady(isRecordingVideo: false));
@@ -119,7 +134,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     );
 
     try {
-      final videoFile = await _stopRecording();
+      final videoFile = await _stopRecordingFinal();
 
       if (hasRecordingLimitError) {
         // Too short: do NOT save / do NOT emit success
@@ -167,9 +182,13 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   // Handle CameraDisable event when camera is not in use
   void _onCameraDisable(CameraDisable event, Emitter<CameraState> emit) async {
+    _segmentedMode = false;
+    _segmentTimer?.cancel();
+    _segmentTimer = null;
+
     if (isInitialized() && isRecording()) {
       try {
-        await _stopRecording();
+        await _stopRecordingFinal();
       } catch (_) {
         // ignore, we're disabling anyway
       }
@@ -177,6 +196,56 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     await _disposeCamera();
     emit(CameraInitial());
   }
+
+  //Handle Camera segment start event
+
+  Future<void> _onSegmentedStart(
+    CameraSegmentedStart event,
+    Emitter<CameraState> emit,
+  ) async {
+    if (_segmentedMode) return;
+    _segmentedMode = true;
+    _segmentBusy = false;
+    _segmentIndex = 0;
+    _chunkSeconds = event.chunkSeconds;
+
+    // Start the first segment
+    try {
+      await _startRecording();
+      recordingDuration.value = 0;
+      _startTimer(); // your existing duration UI timer is fine
+      emit(CameraReady(isRecordingVideo: true));
+    } catch (e) {
+      _segmentedMode = false;
+      await _reInitialize();
+      emit(CameraReady(isRecordingVideo: false));
+      return;
+    }
+
+    _segmentTimer?.cancel();
+    _segmentTimer = Timer.periodic(Duration(seconds: _chunkSeconds), (_) async {
+      await _cutSegmentAndContinue(emit);
+    });
+  }
+
+  Future<void> _onSegmentedStop(
+    CameraSegmentedStop event,
+    Emitter<CameraState> emit,
+  ) async {
+    _segmentedMode = false;
+    _segmentTimer?.cancel();
+    _segmentTimer = null;
+
+    if (isRecording()) {
+      try {
+        final f = await _stopRecordingFinal();
+        emit(CameraChunkReady(file: f, index: _segmentIndex));
+      } catch (_) {}
+    }
+    _segmentBusy = false;
+    emit(CameraReady(isRecordingVideo: false));
+  }
+
 
   // ................... Other methods ......................
 
@@ -193,7 +262,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       recordingDuration.value++;
       if (recordingDuration.value >= recordDurationLimit) {
-        add(CameraRecordingStop());
+        add(_segmentedMode ? const CameraSegmentedStop() : CameraRecordingStop());
       }
     });
   }
@@ -215,15 +284,24 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   }
 
   // Stop video recording and return the recorded video file
-  Future<File> _stopRecording() async {
+  Future<File> _stopRecordingChunk() async {
     try {
       XFile video = await _cameraController!.stopVideoRecording();
-      _stopTimerAndResetDuration();
       return File(video.path);
     } catch (e) {
       return Future.error(e);
     }
   }
+
+  Future<File> _stopRecordingFinal() async {
+  try {
+    final XFile video = await _cameraController!.stopVideoRecording();
+    _stopTimerAndResetDuration(); // <-- only here
+    return File(video.path);
+  } catch (e) {
+    return Future.error(e);
+  }
+}
 
   // Check and ask for camera permission and initialize camera
   Future<void> _checkPermissionAndInitializeCamera() async {
@@ -275,8 +353,47 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   }
 
   Future<void> _disposeCamera() async {
+    _segmentedMode = false;
+    _segmentTimer?.cancel();
+    _segmentTimer = null;
+
     await _cameraController?.dispose();
     _stopTimerAndResetDuration();
-    _cameraController = null; // <-- important: DO NOT create a new controller here
+    _cameraController = null;
   }
+
+  Future<void> _cutSegmentAndContinue(Emitter<CameraState> emit) async {
+    if (!_segmentedMode || _segmentBusy) return;
+    if (!isRecording()) return;
+
+    _segmentBusy = true;
+    try {
+      // stop current segment
+      final f = await _stopRecordingChunk();
+      emit(CameraChunkReady(file: f, index: _segmentIndex));
+      _segmentIndex++;
+
+      // start next segment immediately
+      if (_segmentedMode) {
+        await _startRecording();
+        // don’t restart your 1s UI timer here; it’s tracking overall.
+        emit(CameraReady(isRecordingVideo: true));
+      }
+    } catch (_) {
+      // best effort recover
+      try { await _reInitialize(); } catch (_) {}
+      if (_segmentedMode) {
+        try {
+          await _startRecording();
+          emit(CameraReady(isRecordingVideo: true));
+        } catch (_) {
+          _segmentedMode = false;
+          emit(CameraReady(isRecordingVideo: false));
+        }
+      }
+    } finally {
+      _segmentBusy = false;
+    }
+  }
+
 }

@@ -46,6 +46,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   bool sosInitializing = false;   // UI state
   bool sosLive = false;           // becomes true after room ready
 
+  bool _sosCreateStarted = false;
+  bool _sosCreateDone = false;
+  String? sosServerId; // optional: if backend returns one
+
+
   Future<void> _loadActiveList() async {
     try {
       final data = await AuthService.instance.api.getActiveList();
@@ -149,44 +154,142 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   void _cameraBlocListener(BuildContext context, CameraState state) async {
 
-    if (state is CameraRecordingSuccess) {
-      // Save locally (we already have the file path) and DO NOT navigate
-      final sid = sessionId ?? const Uuid().v4();
-      final savedFile = await _saveToAppDirectory(state.file, sid);
+    //Setting the camera chunk to be ready
 
+    if (state is CameraChunkReady) {
+      final sosId = sosServerId;
+      if (sosId == null) return;
+
+      // upload chunk
+      try {
+        await AuthService.instance.api.uploadSosChunk(
+          sosId: sosId,
+          index: state.index,
+          file: state.file,
+        );
+        debugPrint("Uploaded chunk ${state.index}");
+      } catch (e) {
+        debugPrint("Chunk upload failed ${state.index}: $e");
+        // TODO: queue + retry (we can add next)
+      }
+      return;
+    }
+
+    // ---- Existing: recording success saves file ----
+    if (state is CameraRecordingSuccess) {
+      final sid = sessionId ?? _uuid.v4();
+      final savedFile = await _saveToAppDirectory(state.file, sid);
       if (!mounted) return;
 
       setState(() {
         final already = _savedVideos.any((f) => f.path == savedFile.path);
         if (!already) _savedVideos.add(savedFile);
-        sosInitializing = false; // optional: SOS ended
-        sosLive = false;         // optional: SOS ended
+        sosInitializing = false;
+        sosLive = false;
+
+        // reset SOS flags for next session
+        _sosCreateStarted = false;
+        _sosCreateDone = false;
+        sosServerId = null;
+        sessionId = null;
+        sessionStartTime = null;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.black45,
           duration: Duration(milliseconds: 1200),
-          content: Text(
-            'Saved to My Videos.',
-            style: TextStyle(color: Colors.white),
-          ),
+          content: Text('Saved to My Videos.', style: TextStyle(color: Colors.white)),
         ),
       );
+      return;
+    }
 
-    } else if (state is CameraReady && state.hasRecordingError) {
+    // ---- Existing: too-short recording ----
+    if (state is CameraReady && state.hasRecordingError) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.black45,
           duration: Duration(milliseconds: 1000),
-          content: Text(
-            'Please record for at least 2 seconds.',
-            style: TextStyle(color: Colors.white),
-          ),
+          content: Text('Please record for at least 2 seconds.', style: TextStyle(color: Colors.white)),
         ),
       );
+      // also reset sos ui if you want:
+      if (mounted) {
+        setState(() {
+          sosInitializing = false;
+          sosLive = false;
+          _sosCreateStarted = false;
+          _sosCreateDone = false;
+          sosServerId = null;
+        });
+      }
+      return;
+    }
+
+    // ---- NEW: When recording truly starts, create SOS session on backend (ghost call) ----
+    if (state is CameraReady && state.isRecordingVideo) {
+      if (_sosCreateStarted || _sosCreateDone) return;
+
+      final listId = _activeListId;
+      final listTitle = _activeListTitle ?? 'Active list';
+      final sid = sessionId;
+      final startedAt = sessionStartTime;
+
+      if (listId == null || listId.isEmpty || sid == null || startedAt == null) {
+        // Can't create SOS; keep recording locally anyway
+        if (mounted) setState(() => sosInitializing = false);
+        return;
+      }
+
+      _sosCreateStarted = true;
+
+      try {
+        final recipientsRes = await AuthService.instance.api.getActiveListRecipients(listId: listId);
+        final recipients = (recipientsRes['recipients'] as List<dynamic>? ?? [])
+            .whereType<Map<String, dynamic>>()
+            .toList();
+
+        final res = await AuthService.instance.api.createSos(
+          listId: listId,
+          listTitle: listTitle,
+          message: 'SOS started',
+          recipients: recipients,
+          extraContext: {
+            'sessionId': sid,
+            'startedAtUtc': startedAt.toIso8601String(),
+            'type': 'webrtc_room_placeholder',
+          },
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _sosCreateDone = true;
+          sosInitializing = false;
+          sosLive = true; // this will become "room ready" later
+          sosServerId = res['sosId']?.toString(); // if backend returns it (optional)
+        });
+      } catch (e) {
+        // Backend failed — keep local recording alive
+        if (!mounted) return;
+        setState(() {
+          sosInitializing = false;
+          sosLive = false;
+          _sosCreateStarted = false; // allow a retry if you want
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.black45,
+            duration: const Duration(milliseconds: 1500),
+            content: Text('SOS backend not ready (still recording locally): $e',
+                style: const TextStyle(color: Colors.white)),
+          ),
+        );
+      }
     }
   }
+
 
 
   void _handleVisibilityChanged(VisibilityInfo info) {
@@ -223,12 +326,12 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     debugPrint("Start Time (UTC): $sessionStartTime");
 
     // 1) Start local recording
-    cameraBloc.add(CameraRecordingStart());
+    cameraBloc.add(const CameraSegmentedStart(chunkSeconds: 4));
   }
 
 
   void stopRecording() async {
-    cameraBloc.add(CameraRecordingStop());
+    cameraBloc.add(const CameraSegmentedStop());
   }
 
   Widget _cameraBlocBuilder(BuildContext context, CameraState state) {

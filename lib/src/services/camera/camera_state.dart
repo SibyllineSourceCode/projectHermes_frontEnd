@@ -55,3 +55,12 @@ class CameraError extends CameraState {
   @override
   List<Object> get props => [error];
 }
+
+class CameraChunkReady extends CameraState {
+  final File file;
+  final int index;
+  CameraChunkReady({required this.file, required this.index});
+
+  @override
+  List<Object> get props => [file.path, index];
+}

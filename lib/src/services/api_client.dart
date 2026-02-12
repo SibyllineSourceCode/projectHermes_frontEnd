@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -31,6 +32,33 @@ class ApiClient {
     );
     return _decode(res);
   }
+
+  Future<Map<String, dynamic>> _authedMultipartPost(
+  String path, {
+  required Map<String, String> fields,
+  required List<http.MultipartFile> files,
+  }) async {
+    final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
+
+    final uri = Uri.parse('$baseUrl$path');
+
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $idToken'
+      ..fields.addAll(fields)
+      ..files.addAll(files);
+
+    final streamedResponse = await request.send();
+    final responseBody = await streamedResponse.stream.bytesToString();
+
+    final response = http.Response(
+      responseBody,
+      streamedResponse.statusCode,
+      headers: streamedResponse.headers,
+    );
+
+    return _decode(response);
+  }
+
 
   Future<Map<String, dynamic>> _authedPatch(
     String path,
@@ -133,7 +161,7 @@ class ApiClient {
   Future<Map<String, dynamic>> getActiveList() => _authedGet('/lists/active');
 
   Future<Map<String, dynamic>> getActiveListRecipients({required String listId
-  }) => _authedGet('/lists/$listId/recipients');
+  }) => _authedGet('/lists/$listId/contacts');
 
   Future<Map<String, dynamic>> createSos({
     required String listId,
@@ -148,4 +176,26 @@ class ApiClient {
     'recipients': recipients,
     'extra': extraContext,
   });
+
+  Future<Map<String, dynamic>> uploadSosChunk({
+    required String sosId,
+    required int index,
+    required File file,
+  }) async {
+    return _authedMultipartPost(
+      '/sos/$sosId/chunk',
+      fields: {
+        'index': index.toString(),
+      },
+      files: [
+        await http.MultipartFile.fromPath(
+          'file',
+          file.path,
+          filename: 'chunk_$index.mp4',
+        ),
+      ],
+    );
+  }
+
+
 }

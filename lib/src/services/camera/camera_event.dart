@@ -32,3 +32,14 @@ class CameraEnable extends CameraEvent {}
 
 // Event to reset the camera BLoC to its initial state
 class CameraReset extends CameraEvent {}
+
+//Event to start the segmented camera
+class CameraSegmentedStart extends CameraEvent {
+  final int chunkSeconds;
+  const CameraSegmentedStart({this.chunkSeconds = 4});
+}
+
+//Event to stop the camera recording chunk
+class CameraSegmentedStop extends CameraEvent {
+  const CameraSegmentedStop();
+}
