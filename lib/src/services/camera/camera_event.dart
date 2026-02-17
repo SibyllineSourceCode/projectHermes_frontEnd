@@ -1,3 +1,4 @@
+
 // ignore_for_file: public_member_api_docs, sort_constructors_first
 part of 'camera_bloc.dart';
 
@@ -18,12 +19,6 @@ class CameraInitialize extends CameraEvent {
 // Event to switch between front and back cameras
 class CameraSwitch extends CameraEvent {}
 
-// Event to start video recording
-class CameraRecordingStart extends CameraEvent {}
-
-// Event to stop video recording
-class CameraRecordingStop extends CameraEvent {}
-
 // Event to disable the camera when not in use
 class CameraDisable extends CameraEvent {}
 
@@ -42,4 +37,8 @@ class CameraSegmentedStart extends CameraEvent {
 //Event to stop the camera recording chunk
 class CameraSegmentedStop extends CameraEvent {
   const CameraSegmentedStop();
+}
+
+class CameraSegmentTick extends CameraEvent {
+  const CameraSegmentTick();
 }

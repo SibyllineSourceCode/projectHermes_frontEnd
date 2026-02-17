@@ -7,7 +7,7 @@ class RecordingProgressIndicator extends StatelessWidget {
     super.key,
     required this.value,
     this.minValue = 0,
-    this.maxValue = 15,
+    this.maxValue = 1000,
   });
   final double value;
   final double minValue;

@@ -1,25 +1,27 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+
 import 'package:camera/camera.dart';
-import 'package:project_hermes_front_end/src/screens/settings_screen.dart';
-import 'camera_bloc.dart';
-import 'camera_state.dart';
-import '../../enums/camera_enums.dart';
-import '../../utils/screenshot_utils.dart';
-import '../../widgets/animated_bar.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:project_hermes_front_end/src/enums/camera_enums.dart';
+import 'package:uuid/uuid.dart';
 import 'package:visibility_detector/visibility_detector.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+
+import 'camera_bloc.dart';
+import 'camera_state.dart';
+import '../../utils/screenshot_utils.dart';
+import '../../widgets/animated_bar.dart';
 import '../../screens/list_screen.dart';
 import '../../widgets/active_list_pill.dart';
 import '../../services/auth_service.dart';
-import 'package:uuid/uuid.dart';
+import '../../screens/settings_screen.dart';
 import '../../screens/my_videos_screen.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -29,10 +31,12 @@ class CameraPage extends StatefulWidget {
 }
 
 class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
-  late CameraBloc cameraBloc;
+  late final CameraBloc cameraBloc;
+
   final List<File> _savedVideos = [];
   final GlobalKey screenshotKey = GlobalKey();
   Uint8List? screenshotBytes;
+
   bool isThisPageVisibe = true;
 
   String? _activeListId;
@@ -43,26 +47,26 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   String? sessionId;
   DateTime? sessionStartTime;
 
-  bool sosInitializing = false;   // UI state
-  bool sosLive = false;           // becomes true after room ready
+  bool _creatingSos = false;
+  String? sosServerId;
 
-  bool _sosCreateStarted = false;
-  bool _sosCreateDone = false;
-  String? sosServerId; // optional: if backend returns one
-
+  /* ---------------- Helpers ---------------- */
 
   Future<void> _loadActiveList() async {
     try {
       final data = await AuthService.instance.api.getActiveList();
       final active = data['active'];
 
-      final id = (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
-      final title = (active is Map<String, dynamic>) ? active['title']?.toString() : null;
+      final id =
+          (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
+      final title =
+          (active is Map<String, dynamic>) ? active['title']?.toString() : null;
 
       if (!mounted) return;
       setState(() {
         _activeListId = (id != null && id.isNotEmpty) ? id : null;
-        _activeListTitle = (title != null && title.trim().isNotEmpty) ? title.trim() : null;
+        _activeListTitle =
+            (title != null && title.trim().isNotEmpty) ? title.trim() : null;
       });
     } catch (_) {
       // non-fatal
@@ -89,13 +93,41 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     });
   }
 
+  Future<File> _saveToAppDirectory(File recorded, String sid) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
+    if (!await videosDir.exists()) await videosDir.create(recursive: true);
+
+    final targetPath = p.join(videosDir.path, '$sid.mp4');
+
+    try {
+      return await recorded.rename(targetPath);
+    } catch (_) {
+      final copied = await recorded.copy(targetPath);
+      try {
+        await recorded.delete();
+      } catch (_) {}
+      return copied;
+    }
+  }
+
+  void _resetSessionFlags() {
+    _creatingSos = false;
+    sosServerId = null;
+    sessionId = null;
+    sessionStartTime = null;
+  }
+
+  /* ---------------- Lifecycle ---------------- */
+
   @override
   void initState() {
+    super.initState();
     cameraBloc = BlocProvider.of<CameraBloc>(context);
     WidgetsBinding.instance.addObserver(this);
+
     _loadActiveList();
     _loadSavedVideosFromDisk();
-    super.initState();
   }
 
   @override
@@ -112,10 +144,167 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       cameraBloc.add(CameraDisable());
     } else if (state == AppLifecycleState.resumed) {
       if (isThisPageVisibe) {
-        cameraBloc.add(CameraEnable());  // re-init if needed
+        cameraBloc.add(CameraEnable());
       }
     }
   }
+
+  /* ---------------- Listener ---------------- */
+
+  void _cameraBlocListener(BuildContext context, CameraState state) async {
+    // 1) Chunk ready -> upload
+    if (state is CameraChunkReady) {
+      final sosId = sosServerId;
+      if (sosId == null) return;
+
+      try {
+        await AuthService.instance.api.uploadSosChunk(
+          sosId: sosId,
+          index: state.index,
+          file: state.file,
+        );
+        debugPrint("Uploaded chunk ${state.index}");
+      } catch (e) {
+        debugPrint("Chunk upload failed ${state.index}: $e");
+      }
+      return;
+    }
+
+    // 2) Final recording success -> save locally
+    if (state is CameraRecordingSuccess) {
+      final sid = sessionId ?? _uuid.v4();
+      final savedFile = await _saveToAppDirectory(state.file, sid);
+      if (!mounted) return;
+
+      setState(() {
+        final already = _savedVideos.any((f) => f.path == savedFile.path);
+        if (!already) _savedVideos.add(savedFile);
+        _resetSessionFlags();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black45,
+          duration: Duration(milliseconds: 1200),
+          content:
+              Text('Saved to My Videos.', style: TextStyle(color: Colors.white)),
+        ),
+      );
+      return;
+    }
+
+    // 3) Too short recording -> snackbar + reset SOS flags
+    if (state is CameraReady && state.hasRecordingError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black45,
+          duration: Duration(milliseconds: 1000),
+          content: Text(
+            'Please record for at least 2 seconds.',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(_resetSessionFlags);
+      return;
+    }
+
+    // 4) When recording starts -> create SOS session (once)
+    if (state is CameraReady && state.isRecordingVideo) {
+      if (_creatingSos || sosServerId != null) return;
+
+      final listId = _activeListId;
+      final listTitle = _activeListTitle ?? 'Active list';
+      final sid = sessionId;
+      final startedAt = sessionStartTime;
+
+      if (listId == null || listId.isEmpty || sid == null || startedAt == null) {
+        return;
+      }
+
+      _creatingSos = true;
+
+      try {
+        final recipientsRes =
+            await AuthService.instance.api.getActiveListRecipients(
+          listId: listId,
+        );
+
+        final recipients = (recipientsRes['recipients'] as List<dynamic>? ?? [])
+            .whereType<Map<String, dynamic>>()
+            .toList();
+
+        final res = await AuthService.instance.api.createSos(
+          listId: listId,
+          listTitle: listTitle,
+          message: 'SOS started',
+          recipients: recipients,
+          extraContext: {
+            'sessionId': sid,
+            'startedAtUtc': startedAt.toIso8601String(),
+            'type': 'segmented_upload',
+          },
+        );
+
+        if (!mounted) return;
+        setState(() {
+          sosServerId = res['sosId']?.toString();
+        });
+      } catch (e) {
+        _creatingSos = false; // allow retry later
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.black45,
+            duration: const Duration(milliseconds: 1500),
+            content: Text(
+              'SOS backend not ready (still recording locally): $e',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /* ---------------- Visibility ---------------- */
+
+  void _handleVisibilityChanged(VisibilityInfo info) {
+    final nowVisible = info.visibleFraction > 0.0;
+    if (nowVisible == isThisPageVisibe) return;
+    isThisPageVisibe = nowVisible;
+
+    // Safety: don't disable camera while recording
+    if (!nowVisible && cameraBloc.isRecording()) return;
+
+    cameraBloc.add(nowVisible ? CameraEnable() : CameraDisable());
+  }
+
+  /* ---------------- Actions ---------------- */
+
+  Future<void> startRecording() async {
+    // screenshot for blurred UX
+    try {
+      final bytes = await takeCameraScreenshot(key: screenshotKey);
+      if (mounted) setState(() => screenshotBytes = bytes);
+    } catch (_) {}
+
+    sessionId = _uuid.v4();
+    sessionStartTime = DateTime.now().toUtc();
+    _creatingSos = false;
+    sosServerId = null;
+
+    cameraBloc.add(const CameraSegmentedStart(chunkSeconds: 4));
+  }
+
+  void stopRecording() {
+    cameraBloc.add(const CameraSegmentedStop());
+  }
+
+  /* ---------------- UI ---------------- */
 
   @override
   Widget build(BuildContext context) {
@@ -134,424 +323,221 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<File> _saveToAppDirectory(File recorded, String sessionId) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
-    if (!await videosDir.exists()) await videosDir.create(recursive: true);
-
-    final targetPath = p.join(videosDir.path, '$sessionId.mp4');
-
-    try {
-      return await recorded.rename(targetPath); // move
-    } catch (_) {
-      final copied = await recorded.copy(targetPath);
-      // optional: best-effort cleanup of original
-      try { await recorded.delete(); } catch (_) {}
-      return copied;
-    }
-  }
-
-
-  void _cameraBlocListener(BuildContext context, CameraState state) async {
-
-    //Setting the camera chunk to be ready
-
-    if (state is CameraChunkReady) {
-      final sosId = sosServerId;
-      if (sosId == null) return;
-
-      // upload chunk
-      try {
-        await AuthService.instance.api.uploadSosChunk(
-          sosId: sosId,
-          index: state.index,
-          file: state.file,
-        );
-        debugPrint("Uploaded chunk ${state.index}");
-      } catch (e) {
-        debugPrint("Chunk upload failed ${state.index}: $e");
-        // TODO: queue + retry (we can add next)
-      }
-      return;
-    }
-
-    // ---- Existing: recording success saves file ----
-    if (state is CameraRecordingSuccess) {
-      final sid = sessionId ?? _uuid.v4();
-      final savedFile = await _saveToAppDirectory(state.file, sid);
-      if (!mounted) return;
-
-      setState(() {
-        final already = _savedVideos.any((f) => f.path == savedFile.path);
-        if (!already) _savedVideos.add(savedFile);
-        sosInitializing = false;
-        sosLive = false;
-
-        // reset SOS flags for next session
-        _sosCreateStarted = false;
-        _sosCreateDone = false;
-        sosServerId = null;
-        sessionId = null;
-        sessionStartTime = null;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.black45,
-          duration: Duration(milliseconds: 1200),
-          content: Text('Saved to My Videos.', style: TextStyle(color: Colors.white)),
-        ),
-      );
-      return;
-    }
-
-    // ---- Existing: too-short recording ----
-    if (state is CameraReady && state.hasRecordingError) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.black45,
-          duration: Duration(milliseconds: 1000),
-          content: Text('Please record for at least 2 seconds.', style: TextStyle(color: Colors.white)),
-        ),
-      );
-      // also reset sos ui if you want:
-      if (mounted) {
-        setState(() {
-          sosInitializing = false;
-          sosLive = false;
-          _sosCreateStarted = false;
-          _sosCreateDone = false;
-          sosServerId = null;
-        });
-      }
-      return;
-    }
-
-    // ---- NEW: When recording truly starts, create SOS session on backend (ghost call) ----
-    if (state is CameraReady && state.isRecordingVideo) {
-      if (_sosCreateStarted || _sosCreateDone) return;
-
-      final listId = _activeListId;
-      final listTitle = _activeListTitle ?? 'Active list';
-      final sid = sessionId;
-      final startedAt = sessionStartTime;
-
-      if (listId == null || listId.isEmpty || sid == null || startedAt == null) {
-        // Can't create SOS; keep recording locally anyway
-        if (mounted) setState(() => sosInitializing = false);
-        return;
-      }
-
-      _sosCreateStarted = true;
-
-      try {
-        final recipientsRes = await AuthService.instance.api.getActiveListRecipients(listId: listId);
-        final recipients = (recipientsRes['recipients'] as List<dynamic>? ?? [])
-            .whereType<Map<String, dynamic>>()
-            .toList();
-
-        final res = await AuthService.instance.api.createSos(
-          listId: listId,
-          listTitle: listTitle,
-          message: 'SOS started',
-          recipients: recipients,
-          extraContext: {
-            'sessionId': sid,
-            'startedAtUtc': startedAt.toIso8601String(),
-            'type': 'webrtc_room_placeholder',
-          },
-        );
-
-        if (!mounted) return;
-        setState(() {
-          _sosCreateDone = true;
-          sosInitializing = false;
-          sosLive = true; // this will become "room ready" later
-          sosServerId = res['sosId']?.toString(); // if backend returns it (optional)
-        });
-      } catch (e) {
-        // Backend failed — keep local recording alive
-        if (!mounted) return;
-        setState(() {
-          sosInitializing = false;
-          sosLive = false;
-          _sosCreateStarted = false; // allow a retry if you want
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.black45,
-            duration: const Duration(milliseconds: 1500),
-            content: Text('SOS backend not ready (still recording locally): $e',
-                style: const TextStyle(color: Colors.white)),
-          ),
-        );
-      }
-    }
-  }
-
-
-
-  void _handleVisibilityChanged(VisibilityInfo info) {
-    final nowVisible = info.visibleFraction > 0.0;
-    if (nowVisible == isThisPageVisibe) return; // avoid spamming
-    isThisPageVisibe = nowVisible;
-    cameraBloc.add(nowVisible ? CameraEnable() : CameraDisable());
-  }
-
-
-
-  void startRecording() async {
-    // -1) grab screenshot early for smooth UX
-    try {
-      final bytes = await takeCameraScreenshot(key: screenshotKey);
-      if (mounted) setState(() => screenshotBytes = bytes);
-    } catch (_) {
-      // ignore screenshot errors
-    }
-
-    // 0) PRE-FLIGHT SESSION SETUP
-    sessionId = _uuid.v4();                 // globally unique session key
-    sessionStartTime = DateTime.now().toUtc(); // use UTC for backend alignment
-
-    if (mounted) {
-      setState(() {
-        sosInitializing = true;  // show spinner / "Starting SOS..."
-        sosLive = false;
-      });
-    }
-
-    debugPrint("SOS PRE-FLIGHT");
-    debugPrint("Session ID: $sessionId");
-    debugPrint("Start Time (UTC): $sessionStartTime");
-
-    // 1) Start local recording
-    cameraBloc.add(const CameraSegmentedStart(chunkSeconds: 4));
-  }
-
-
-  void stopRecording() async {
-    cameraBloc.add(const CameraSegmentedStop());
-  }
-
   Widget _cameraBlocBuilder(BuildContext context, CameraState state) {
-  final bool isReady = state is CameraReady;
-  final bool disableButtons = !(isReady && !state.isRecordingVideo);
+    final bool isReady = state is CameraReady || state is CameraChunkReady;
+    final bool isRecording = switch (state) {
+      CameraReady s => s.isRecordingVideo,
+      CameraChunkReady _ => true,
+      _ => false,
+    };
 
-  final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
-  final pillTitle = hasActiveList ? (_activeListTitle ?? 'Active list') : 'No active list';
+    final bool disableButtons = !(isReady && !isRecording);
 
-  // Get the controller once
-  final controller = cameraBloc.getController();
+    final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
+    final pillTitle =
+        hasActiveList ? (_activeListTitle ?? 'Active list') : 'No active list';
 
-  // Keep the preview subtree mounted; do NOT wrap in AnimatedSwitcher.
-  final Widget preview = (controller != null && controller.value.isInitialized)
-      ? Transform.scale(
-          key: const ValueKey('stable_camera_preview'),
-          scale: 1 /
-              (controller.value.aspectRatio *
-                  MediaQuery.of(context).size.aspectRatio),
-          child: CameraPreview(controller),
-        )
-      : const SizedBox.shrink();
+    final controller = cameraBloc.getController();
+    final canPreview = isReady && _controllerUsable(controller);
 
-  return Column(
-    children: [
-      Expanded(
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Preview surface that should remain alive
-            RepaintBoundary(
-              key: screenshotKey,
-              child: preview,
+    final Widget preview = canPreview
+        ? KeyedSubtree(
+            key: ValueKey(controller!.hashCode),
+            child: Transform.scale(
+              scale: 1 /
+                  (controller.value.aspectRatio *
+                      MediaQuery.of(context).size.aspectRatio),
+              child: CameraPreview(controller),
             ),
+          )
+        : const SizedBox.shrink();
 
-            // Optional blurred screenshot backdrop while not ready
-            if (!isReady && screenshotBytes != null)
-              Container(
-                constraints: const BoxConstraints.expand(),
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: MemoryImage(screenshotBytes!),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0),
-                  child: const SizedBox.shrink(),
-                ),
-              ),
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              RepaintBoundary(key: screenshotKey, child: preview),
 
-            // Loader overlay for ANY non-ready state
-            if (!isReady) const Center(child: CircularProgressIndicator()),
-
-            // Error overlay (on top)
-            if (state is CameraError) errorWidget(state),
-
-            //----- Top Left My Videos Screen
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 12,
-              left: 12,
-              child: Visibility(
-                visible: !disableButtons,
-                child: CircleAvatar(
-                  backgroundColor: Colors.white.withOpacity(0.5),
-                  radius: 25,
-                  child: IconButton(
-                    tooltip: 'My Videos',
-                    icon: const Icon(Icons.video_library, color: Colors.black, size: 28),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => MyVideosScreen(videos: _savedVideos),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-            // ---- Top-right Settings button (outside bottom control box) ----
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 12,
-              right: 12,
-              child: Visibility(
-                visible: !disableButtons,
-                child: CircleAvatar(
-                  backgroundColor: Colors.white.withOpacity(0.5),
-                  radius: 25,
-                  child: IconButton(
-                    tooltip: 'Settings',
-                    icon: const Icon(Icons.settings, color: Colors.black, size: 28),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-            // ---- Active List pill (above record button) ----
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 30 + 90 + 12, // bottomControls(30) + max record btn size(90) + gap(12)
-              child: Visibility(
-                visible: !disableButtons, // hide if camera not ready
-                child: Center(
-                  child: ActiveListPill(
-                    title: pillTitle,
-                    onTap: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ListScreen()),
-                      );
-                      await _loadActiveList(); // refresh when returning
-                    },
-                  ),
-                ),
-              ),
-            ),
-            // ---- Bottom controls (unchanged structure) ----
-            Positioned(
-              bottom: 30,
-              child: SizedBox(
-                width: 250,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    IgnorePointer(
-                      ignoring: state is! CameraReady || state.decativateRecordButton,
-                      child: Opacity(
-                        opacity: (state is! CameraReady || state.decativateRecordButton) ? 0.4 : 1,
-                        child: animatedProgressButton(state),
-                      ),
+              if (!isReady && screenshotBytes != null)
+                Container(
+                  constraints: const BoxConstraints.expand(),
+                  decoration: BoxDecoration(
+                    image: DecorationImage(
+                      image: MemoryImage(screenshotBytes!),
+                      fit: BoxFit.cover,
                     ),
-                    Positioned(
-                      right: 0,
-                      child: Visibility(
-                        visible: !disableButtons,
-                        child: CircleAvatar(
-                          backgroundColor: Colors.white.withOpacity(0.5),
-                          radius: 25,
-                          // -------- CAMERA SWITCH BUTTON ----------
-                          child: IconButton(
-                            onPressed: () async {
-                              try {
-                                final bytes = await takeCameraScreenshot(key: screenshotKey);
-                                if (!mounted) return;
-                                setState(() => screenshotBytes = bytes);
-                                cameraBloc.add(CameraSwitch());
-                              } catch (_) {
-                                // screenshot error - ignore for now
-                              }
-                            },
-                            icon: const Icon(Icons.cameraswitch, color: Colors.black, size: 28),
+                  ),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0),
+                    child: const SizedBox.shrink(),
+                  ),
+                ),
+
+              if (!isReady) const Center(child: CircularProgressIndicator()),
+              if (state is CameraError) errorWidget(state),
+
+              // --- Top-left: My Videos ---
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 12,
+                left: 12,
+                child: Visibility(
+                  visible: !disableButtons,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.white.withOpacity(0.5),
+                    radius: 25,
+                    child: IconButton(
+                      tooltip: 'My Videos',
+                      icon: const Icon(Icons.video_library,
+                          color: Colors.black, size: 28),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MyVideosScreen(videos: _savedVideos),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+
+              // --- Top-right: Settings ---
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 12,
+                right: 12,
+                child: Visibility(
+                  visible: !disableButtons,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.white.withOpacity(0.5),
+                    radius: 25,
+                    child: IconButton(
+                      tooltip: 'Settings',
+                      icon: const Icon(Icons.settings,
+                          color: Colors.black, size: 28),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SettingsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+
+              // --- Active List pill ---
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 30 + 90 + 12,
+                child: Visibility(
+                  visible: !disableButtons,
+                  child: Center(
+                    child: ActiveListPill(
+                      title: pillTitle,
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ListScreen()),
+                        );
+                        await _loadActiveList();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+
+              // --- Bottom controls ---
+              Positioned(
+                bottom: 30,
+                child: SizedBox(
+                  width: 250,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      IgnorePointer(
+                        ignoring:
+                            state is! CameraReady || state.decativateRecordButton,
+                        child: Opacity(
+                          opacity: (state is! CameraReady ||
+                                  state.decativateRecordButton)
+                              ? 0.4
+                              : 1,
+                          child: animatedProgressButton(state),
+                        ),
+                      ),
+
+                      Positioned(
+                        right: 0,
+                        child: Visibility(
+                          visible: !disableButtons,
+                          child: CircleAvatar(
+                            backgroundColor: Colors.white.withOpacity(0.5),
+                            radius: 25,
+                            child: IconButton(
+                              onPressed: () async {
+                                if (cameraBloc.isRecording()) return;
+                                try {
+                                  final bytes =
+                                      await takeCameraScreenshot(key: screenshotKey);
+                                  if (!mounted) return;
+                                  setState(() => screenshotBytes = bytes);
+                                  cameraBloc.add(CameraSwitch());
+                                } catch (_) {}
+                              },
+                              icon: const Icon(Icons.cameraswitch,
+                                  color: Colors.black, size: 28),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    // -------------------------------List Screen Nav button------------------------
-                    Positioned(
-                      left: 0,
-                      child: Visibility(
-                        visible: !disableButtons,
-                        child: StatefulBuilder(
-                          // RECORD DURATION BUTTON - changed to Lists button
-                          builder: (context, localSetState) {
-                            return GestureDetector(
-                              onTap: () async {
-                                await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const ListScreen(),
-                                  ),
-                                );
-                                await _loadActiveList();
-                                // If you later want to cycle duration limits, restore that code here.
-                              },
-                              child: CircleAvatar(
-                                backgroundColor: Colors.white.withOpacity(0.5),
-                                radius: 25,
-                                child: const Icon(Icons.list, color: Colors.black, size: 28),
-                              ),
-                            );
-                          },
+
+                      Positioned(
+                        left: 0,
+                        child: Visibility(
+                          visible: !disableButtons,
+                          child: GestureDetector(
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const ListScreen(),
+                                ),
+                              );
+                              await _loadActiveList();
+                            },
+                            child: CircleAvatar(
+                              backgroundColor: Colors.white.withOpacity(0.5),
+                              radius: 25,
+                              child: const Icon(Icons.list,
+                                  color: Colors.black, size: 28),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    ],
-  );
-}
-
+      ],
+    );
+  }
 
   Widget animatedProgressButton(CameraState state) {
-    bool isRecording = state is CameraReady && state.isRecordingVideo;
+    final bool isRecording = state is CameraReady && state.isRecordingVideo;
+
     return GestureDetector(
-      onTap: () async {
-        if (isRecording) {
-          stopRecording();
-        } else {
-          startRecording();
-        }
-      },
-      onLongPress: () {
-        startRecording();
-      },
-      onLongPressEnd: (_) {
-        stopRecording();
-      },
+      onTap: () => isRecording ? stopRecording() : startRecording(),
+      onLongPress: startRecording,
+      onLongPressEnd: (_) => stopRecording(),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         height: isRecording ? 90 : 80,
@@ -571,7 +557,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 return TweenAnimationBuilder<double>(
                   duration: Duration(milliseconds: isRecording ? 1100 : 0),
                   tween: Tween<double>(
-                    begin: isRecording ? 1 : 0, //val.toDouble(),,
+                    begin: isRecording ? 1 : 0,
                     end: isRecording ? val.toDouble() + 1 : 0,
                   ),
                   curve: Curves.linear,
@@ -592,28 +578,17 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
               },
             ),
             Center(
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.linear,
-                    height: isRecording ? 25 : 64,
-                    width: isRecording ? 25 : 64,
-                    decoration: BoxDecoration(
-                      color: const Color.fromARGB(
-                        255,
-                        255,
-                        255,
-                        255,
-                      ), //Color(0xffe80415),
-                      borderRadius:
-                          isRecording
-                              ? BorderRadius.circular(6)
-                              : BorderRadius.circular(100),
-                    ),
-                  ),
-                ],
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.linear,
+                height: isRecording ? 25 : 64,
+                width: isRecording ? 25 : 64,
+                decoration: BoxDecoration(
+                  color: const Color.fromARGB(255, 255, 255, 255),
+                  borderRadius: isRecording
+                      ? BorderRadius.circular(6)
+                      : BorderRadius.circular(100),
+                ),
               ),
             ),
           ],
@@ -623,8 +598,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Widget errorWidget(CameraState state) {
-    bool isPermissionError =
+    final bool isPermissionError =
         state is CameraError && state.error == CameraErrorType.permission;
+
     return Container(
       color: Colors.black,
       child: Padding(
@@ -655,12 +631,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     child: Container(
                       height: 35,
                       decoration: BoxDecoration(
-                        color: const Color.fromARGB(
-                          136,
-                          76,
-                          75,
-                          75,
-                        ).withOpacity(0.4),
+                        color: const Color.fromARGB(136, 76, 75, 75)
+                            .withOpacity(0.4),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Center(
@@ -685,5 +657,15 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+}
+
+bool _controllerUsable(CameraController? c) {
+  if (c == null) return false;
+  try {
+    final v = c.value;
+    return v.isInitialized;
+  } catch (_) {
+    return false;
   }
 }
