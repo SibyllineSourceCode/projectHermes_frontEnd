@@ -23,7 +23,8 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   // UI timer (progress ring)
   Timer? recordingTimer;
-  final ValueNotifier<int> recordingDuration = ValueNotifier(0);
+  final ValueNotifier<int> segmentDuration = ValueNotifier(0);
+  final ValueNotifier<int> totalDuration = ValueNotifier(0);
   int recordDurationLimit = 60;
 
   // Segmentation
@@ -127,7 +128,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _segmentIndex = 0;
     _chunkSeconds = event.chunkSeconds;
 
-    recordingDuration.value = 0;
+    segmentDuration.value = 0;
     _startUiTimer();
 
     try {
@@ -199,6 +200,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     Emitter<CameraState> emit, {
     required bool emitFinalChunk,
   }) async {
+    totalDuration.value = 0;
     _segmentTimer?.cancel();
     _segmentTimer = null;
     _stopUiTimer();
@@ -293,9 +295,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     if (recordingTimer?.isActive ?? false) return;
 
     recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      recordingDuration.value++;
+      segmentDuration.value++;
+      totalDuration.value++;
 
-      if (recordingDuration.value >= recordDurationLimit) {
+      if (segmentDuration.value >= recordDurationLimit) {
         add(const CameraSegmentedStop());
       }
     });
@@ -304,6 +307,6 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   void _stopUiTimer() {
     recordingTimer?.cancel();
     recordingTimer = null;
-    recordingDuration.value = 0;
+    segmentDuration.value = 0;
   }
 }

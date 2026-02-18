@@ -532,7 +532,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Widget animatedProgressButton(CameraState state) {
-    final bool isRecording = state is CameraReady && state.isRecordingVideo;
+    final bool isRecording = switch (state) {
+      CameraReady s => s.isRecordingVideo,
+      CameraChunkReady _ => true,
+      _ => false,
+    };
 
     return GestureDetector(
       onTap: () => isRecording ? stopRecording() : startRecording(),
@@ -551,32 +555,24 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 color: const Color(0xFF978B8B).withOpacity(0.8),
               ),
             ),
+
             ValueListenableBuilder(
-              valueListenable: cameraBloc.recordingDuration,
-              builder: (context, val, child) {
-                return TweenAnimationBuilder<double>(
-                  duration: Duration(milliseconds: isRecording ? 1100 : 0),
-                  tween: Tween<double>(
-                    begin: isRecording ? 1 : 0,
-                    end: isRecording ? val.toDouble() + 1 : 0,
+              valueListenable: cameraBloc.totalDuration, // or recordingDuration
+              builder: (context, val, _) {
+                return Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    height: isRecording ? 90 : 30,
+                    width: isRecording ? 90 : 30,
+                    child: RecordingProgressIndicator(
+                      value: val.toDouble(),
+                      maxValue: cameraBloc.recordDurationLimit.toDouble(),
+                    ),
                   ),
-                  curve: Curves.linear,
-                  builder: (context, value, _) {
-                    return Center(
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        height: isRecording ? 90 : 30,
-                        width: isRecording ? 90 : 30,
-                        child: RecordingProgressIndicator(
-                          value: value,
-                          maxValue: cameraBloc.recordDurationLimit.toDouble(),
-                        ),
-                      ),
-                    );
-                  },
                 );
               },
             ),
+
             Center(
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
@@ -585,9 +581,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 width: isRecording ? 25 : 64,
                 decoration: BoxDecoration(
                   color: const Color.fromARGB(255, 255, 255, 255),
-                  borderRadius: isRecording
-                      ? BorderRadius.circular(6)
-                      : BorderRadius.circular(100),
+                  borderRadius:
+                      isRecording ? BorderRadius.circular(6) : BorderRadius.circular(100),
                 ),
               ),
             ),
@@ -596,6 +591,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       ),
     );
   }
+
 
   Widget errorWidget(CameraState state) {
     final bool isPermissionError =
