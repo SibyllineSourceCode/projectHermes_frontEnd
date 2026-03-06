@@ -183,7 +183,7 @@ class ApiClient {
     required File file,
   }) async {
     return _authedMultipartPost(
-      '/sos/$sosId/chunks',
+      '/sos/$sosId/chunk',
       fields: {
         'index': index.toString(),
       },

@@ -149,16 +149,22 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final sid = sessionId;
       if (sid == null) return;
 
-      // Save to disk immediately – this is the safety net.
-      await VideoStorageUtils.instance.saveChunk(
+      // Save to disk first — copies from temp path to stable location
+      final savedFile = await VideoStorageUtils.instance.saveChunk(
         sessionId: sid,
         index: state.index,
         file: state.file,
       );
 
-      // Queue for upload; drain once the SOS ID is available.
-      _pendingChunks.add(state);
-      await _flushPendingChunks();
+      // Only queue if save succeeded — use stable path, not the temp file
+      if (savedFile != null) {
+        _pendingChunks.add(
+          CameraChunkReady(file: savedFile, index: state.index),
+        );
+        await _flushPendingChunks();
+      } else {
+        debugPrint('[CameraPage] saveChunk failed for index=${state.index}, skipping upload');
+      }
       return;
     }
 
@@ -265,8 +271,16 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           sosServerId = res['sosId']?.toString();
         });
 
+        setState(() {
+          sosServerId = res['sosId']?.toString();
+        });
+
+        debugPrint('[CameraPage] sosServerId set to: $sosServerId');
+        debugPrint('[CameraPage] pending chunks: ${_pendingChunks.length}');
+
         // Drain any chunks that arrived before the SOS ID was ready.
         await _flushPendingChunks();
+        debugPrint('[CameraPage] flush complete');
       } catch (e) {
         _creatingSos = false;
         if (!mounted) return;
@@ -290,6 +304,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /// Uploads all queued chunks that arrived before [sosServerId] was set.
   Future<void> _flushPendingChunks() async {
     final sosId = sosServerId;
+    debugPrint('[CameraPage] _flushPendingChunks: sosId=$sosId, pending=${_pendingChunks.length}');
     if (sosId == null || _pendingChunks.isEmpty) return;
 
     // Drain the queue into a local list so new arrivals don't interfere.
