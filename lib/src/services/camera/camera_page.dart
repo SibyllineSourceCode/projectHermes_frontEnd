@@ -8,10 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:project_hermes_front_end/src/enums/camera_enums.dart';
+import 'package:project_hermes_front_end/src/utils/video_storage_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'package:visibility_detector/visibility_detector.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 import 'camera_bloc.dart';
 import 'camera_state.dart';
@@ -50,6 +49,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   bool _creatingSos = false;
   String? sosServerId;
 
+  // Chunks that arrived before the SOS ID was ready.
+  final List<CameraChunkReady> _pendingChunks = [];
+
   /* ---------------- Helpers ---------------- */
 
   Future<void> _loadActiveList() async {
@@ -74,40 +76,28 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadSavedVideosFromDisk() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
-    if (!await videosDir.exists()) return;
-
-    final files = videosDir
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.toLowerCase().endsWith('.mp4'))
-        .toList()
-      ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-
+    final videos = await VideoStorageUtils.instance.loadFinalVideos();
     if (!mounted) return;
     setState(() {
       _savedVideos
         ..clear()
-        ..addAll(files);
+        ..addAll(videos);
     });
   }
 
-  Future<File> _saveToAppDirectory(File recorded, String sid) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final videosDir = Directory(p.join(dir.path, 'sos_videos'));
-    if (!await videosDir.exists()) await videosDir.create(recursive: true);
-
-    final targetPath = p.join(videosDir.path, '$sid.mp4');
-
-    try {
-      return await recorded.rename(targetPath);
-    } catch (_) {
-      final copied = await recorded.copy(targetPath);
-      try {
-        await recorded.delete();
-      } catch (_) {}
-      return copied;
+  /// Recovers any chunk folders left behind by a previous crash/interruption
+  /// and attempts to re-stitch them into final videos.
+  Future<void> _recoverOrphanedSessions() async {
+    final orphans = await VideoStorageUtils.instance.findOrphanedSessions();
+    for (final sessionId in orphans.keys) {
+      debugPrint('[CameraPage] Recovering orphaned session: $sessionId');
+      final file = await VideoStorageUtils.instance.stitchSession(sessionId);
+      if (file != null && mounted) {
+        setState(() {
+          final already = _savedVideos.any((f) => f.path == file.path);
+          if (!already) _savedVideos.insert(0, file);
+        });
+      }
     }
   }
 
@@ -116,6 +106,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     sosServerId = null;
     sessionId = null;
     sessionStartTime = null;
+    _pendingChunks.clear();
   }
 
   /* ---------------- Lifecycle ---------------- */
@@ -128,6 +119,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
     _loadActiveList();
     _loadSavedVideosFromDisk();
+    _recoverOrphanedSessions(); // heal any crash leftovers on startup
   }
 
   @override
@@ -152,48 +144,68 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /* ---------------- Listener ---------------- */
 
   void _cameraBlocListener(BuildContext context, CameraState state) async {
-    // 1) Chunk ready -> upload
+    // ── 1. Chunk ready → save locally, then try to upload ──────────────────
     if (state is CameraChunkReady) {
-      final sosId = sosServerId;
-      if (sosId == null) return;
+      final sid = sessionId;
+      if (sid == null) return;
 
-      try {
-        await AuthService.instance.api.uploadSosChunk(
-          sosId: sosId,
-          index: state.index,
-          file: state.file,
-        );
-        debugPrint("Uploaded chunk ${state.index}");
-      } catch (e) {
-        debugPrint("Chunk upload failed ${state.index}: $e");
-      }
+      // Save to disk immediately – this is the safety net.
+      await VideoStorageUtils.instance.saveChunk(
+        sessionId: sid,
+        index: state.index,
+        file: state.file,
+      );
+
+      // Queue for upload; drain once the SOS ID is available.
+      _pendingChunks.add(state);
+      await _flushPendingChunks();
       return;
     }
 
-    // 2) Final recording success -> save locally
-    if (state is CameraRecordingSuccess) {
-      final sid = sessionId ?? _uuid.v4();
-      final savedFile = await _saveToAppDirectory(state.file, sid);
+    // ── 2. Recording stopped → stitch chunks into final video ───────────────
+    if (state is CameraReady && !state.isRecordingVideo && sessionId != null) {
+      final sid = sessionId!;
+
+      // Stitch runs in the background; UI stays responsive.
+      final stitched = await VideoStorageUtils.instance.stitchSession(sid);
+
       if (!mounted) return;
 
-      setState(() {
-        final already = _savedVideos.any((f) => f.path == savedFile.path);
-        if (!already) _savedVideos.add(savedFile);
-        _resetSessionFlags();
-      });
+      if (stitched != null) {
+        setState(() {
+          final already = _savedVideos.any((f) => f.path == stitched.path);
+          if (!already) _savedVideos.insert(0, stitched);
+        });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.black45,
-          duration: Duration(milliseconds: 1200),
-          content:
-              Text('Saved to My Videos.', style: TextStyle(color: Colors.white)),
-        ),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.black45,
+            duration: Duration(milliseconds: 1200),
+            content: Text(
+              'Saved to My Videos.',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        );
+      } else {
+        // Stitching failed – chunks are still on disk, nothing lost.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.black45,
+            duration: Duration(milliseconds: 2000),
+            content: Text(
+              'Video saved in segments. Will recover on next launch.',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        );
+      }
+
+      setState(_resetSessionFlags);
       return;
     }
 
-    // 3) Too short recording -> snackbar + reset SOS flags
+    // ── 3. Too-short recording error ────────────────────────────────────────
     if (state is CameraReady && state.hasRecordingError) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -211,7 +223,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       return;
     }
 
-    // 4) When recording starts -> create SOS session (once)
+    // ── 4. Recording started → create SOS session on server (once) ──────────
     if (state is CameraReady && state.isRecordingVideo) {
       if (_creatingSos || sosServerId != null) return;
 
@@ -252,8 +264,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         setState(() {
           sosServerId = res['sosId']?.toString();
         });
+
+        // Drain any chunks that arrived before the SOS ID was ready.
+        await _flushPendingChunks();
       } catch (e) {
-        _creatingSos = false; // allow retry later
+        _creatingSos = false;
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -261,11 +276,37 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             backgroundColor: Colors.black45,
             duration: const Duration(milliseconds: 1500),
             content: Text(
-              'SOS backend not ready (still recording locally): $e',
+              'SOS backend not ready (recording locally): $e',
               style: const TextStyle(color: Colors.white),
             ),
           ),
         );
+      }
+    }
+  }
+
+  /* ---------------- Upload helper ---------------- */
+
+  /// Uploads all queued chunks that arrived before [sosServerId] was set.
+  Future<void> _flushPendingChunks() async {
+    final sosId = sosServerId;
+    if (sosId == null || _pendingChunks.isEmpty) return;
+
+    // Drain the queue into a local list so new arrivals don't interfere.
+    final toUpload = List<CameraChunkReady>.from(_pendingChunks);
+    _pendingChunks.clear();
+
+    for (final chunk in toUpload) {
+      try {
+        await AuthService.instance.api.uploadSosChunk(
+          sosId: sosId,
+          index: chunk.index,
+          file: chunk.file,
+        );
+        debugPrint('[CameraPage] Uploaded chunk ${chunk.index}');
+      } catch (e) {
+        debugPrint('[CameraPage] Chunk upload failed ${chunk.index}: $e');
+        // Chunk is already on disk – server can request a retry later.
       }
     }
   }
@@ -277,7 +318,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     if (nowVisible == isThisPageVisibe) return;
     isThisPageVisibe = nowVisible;
 
-    // Safety: don't disable camera while recording
     if (!nowVisible && cameraBloc.isRecording()) return;
 
     cameraBloc.add(nowVisible ? CameraEnable() : CameraDisable());
@@ -286,7 +326,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /* ---------------- Actions ---------------- */
 
   Future<void> startRecording() async {
-    // screenshot for blurred UX
     try {
       final bytes = await takeCameraScreenshot(key: screenshotKey);
       if (mounted) setState(() => screenshotBytes = bytes);
@@ -296,6 +335,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     sessionStartTime = DateTime.now().toUtc();
     _creatingSos = false;
     sosServerId = null;
+    _pendingChunks.clear();
 
     cameraBloc.add(const CameraSegmentedStart(chunkSeconds: 4));
   }
@@ -461,8 +501,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     alignment: Alignment.center,
                     children: [
                       IgnorePointer(
-                        ignoring:
-                            state is! CameraReady || state.decativateRecordButton,
+                        ignoring: state is! CameraReady ||
+                            state.decativateRecordButton,
                         child: Opacity(
                           opacity: (state is! CameraReady ||
                                   state.decativateRecordButton)
@@ -483,8 +523,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                               onPressed: () async {
                                 if (cameraBloc.isRecording()) return;
                                 try {
-                                  final bytes =
-                                      await takeCameraScreenshot(key: screenshotKey);
+                                  final bytes = await takeCameraScreenshot(
+                                      key: screenshotKey);
                                   if (!mounted) return;
                                   setState(() => screenshotBytes = bytes);
                                   cameraBloc.add(CameraSwitch());
@@ -557,7 +597,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             ),
 
             ValueListenableBuilder(
-              valueListenable: cameraBloc.totalDuration, // or recordingDuration
+              valueListenable: cameraBloc.totalDuration,
               builder: (context, val, _) {
                 return Center(
                   child: AnimatedContainer(
@@ -581,8 +621,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 width: isRecording ? 25 : 64,
                 decoration: BoxDecoration(
                   color: const Color.fromARGB(255, 255, 255, 255),
-                  borderRadius:
-                      isRecording ? BorderRadius.circular(6) : BorderRadius.circular(100),
+                  borderRadius: isRecording
+                      ? BorderRadius.circular(6)
+                      : BorderRadius.circular(100),
                 ),
               ),
             ),
@@ -591,7 +632,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       ),
     );
   }
-
 
   Widget errorWidget(CameraState state) {
     final bool isPermissionError =
@@ -634,7 +674,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                       child: Center(
                         child: FittedBox(
                           child: Text(
-                            "Open Setting",
+                            "Open Settings",
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.9),
                               fontSize: 14,
@@ -659,8 +699,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 bool _controllerUsable(CameraController? c) {
   if (c == null) return false;
   try {
-    final v = c.value;
-    return v.isInitialized;
+    return c.value.isInitialized;
   } catch (_) {
     return false;
   }
