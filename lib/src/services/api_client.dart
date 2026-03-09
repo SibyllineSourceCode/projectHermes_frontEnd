@@ -197,5 +197,11 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> finalizeUser({
+    required String userId,
+    String? sessionId,
+  }) => _authedPost("/sos/finalize", {'userId': userId});
+  
+
 
 }

@@ -6,12 +6,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../utils/video_storage_utils.dart';
-
+import '../services/auth_service.dart';
 
 // ── Colours ──────────────────────────────────────────────────────────────────
 
 // Synced rows: slightly blue-tinted dark (uploaded to server)
-const _syncedBg   = Color(0xFF1E2A35);
 const _syncedBadgeBg   = Color(0xFF1E6B9E);
 const _syncedBadgeText = Color(0xFFADD8F7);
 
@@ -25,11 +24,12 @@ const _localBadgeText = Color(0xFFF7C9AD);
 /// A video entry carrying its file, sync status, and lazily-loaded thumbnail.
 class _VideoEntry {
   final File file;
-  final bool isSynced;       // true = passed from CameraPage (server-synced)
-  Uint8List? thumbnail;      // null = not yet loaded
+  final bool isLocal;   // always true since it came from disk
+  final bool isServer;  // true = confirmed on server post-stitching
+  Uint8List? thumbnail;
   bool thumbnailAttempted = false;
 
-  _VideoEntry({required this.file, required this.isSynced});
+  _VideoEntry({required this.file, required this.isLocal, required this.isServer});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +73,21 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
   /* ---------------- Data loading ---------------- */
 
   Future<void> _init() async {
+    final currentUser = await AuthService.instance.api.me();
+    final stitchResult = await AuthService.instance.api.finalizeUser(userId: currentUser['uid']);
+
+    // Extract sosIds that were successfully finalized on the server
+    // Each result has finalStoragePath = "sos/{sosId}/final.mp4"
+    final serverSosIds = (stitchResult['finalized'] as List<dynamic>? ?? [])
+        .where((v) => v['ok'] == true && v['finalStoragePath'] != null)
+        .map((v) {
+          // Extract sosId from "sos/{sosId}/final.mp4"
+          final parts = (v['finalStoragePath'] as String).split('/');
+          return parts.length >= 2 ? parts[1] : null;
+        })
+        .whereType<String>()
+        .toSet();
+
     // Prepare thumb cache dir
     final docs = await getApplicationDocumentsDirectory();
     _thumbCacheDir = Directory(p.join(docs.path, 'sos_video_thumbs'));
@@ -80,23 +95,18 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
       await _thumbCacheDir!.create(recursive: true);
     }
 
-    // Build synced set from paths passed in by CameraPage
-    final syncedPaths = widget.videos.map((f) => f.path).toSet();
-
-    // Seed entries as synced
-    final entries = widget.videos
-        .map((f) => _VideoEntry(file: f, isSynced: true))
-        .toList();
-
-    // Merge disk-only videos
+    // Load all videos from disk
     final diskVideos = await VideoStorageUtils.instance.loadFinalVideos();
-    for (final f in diskVideos) {
-      if (!syncedPaths.contains(f.path)) {
-        entries.add(_VideoEntry(file: f, isSynced: false));
-      }
-    }
 
-    // Sort newest first
+    // Synced = exists locally AND confirmed on server (matched by sosId in path)
+    final entries = diskVideos.map((f) {
+      final isServer = serverSosIds.any((id) => f.path.contains(id));
+      debugPrint('[VideoSync]=$serverSosIds');
+      debugPrint('[VideoSync]=${f.path}');
+      debugPrint('[VideoSync]=$isServer');
+      return _VideoEntry(file: f, isLocal: true, isServer: isServer);
+    }).toList();
+
     entries.sort((a, b) =>
         b.file.lastModifiedSync().compareTo(a.file.lastModifiedSync()));
 
@@ -106,12 +116,10 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
       _loading = false;
     });
 
-    // Kick off thumbnail generation for all entries
     for (final e in _entries) {
       _loadThumbnail(e);
     }
   }
-
   /* ---------------- Thumbnails ---------------- */
 
   Future<void> _loadThumbnail(_VideoEntry entry) async {
@@ -168,16 +176,23 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
     await ctrl.initialize();
     if (!mounted) return;
 
-    ctrl.addListener(() { if (mounted) setState(() {}); });
+    ctrl.addListener(() { if (mounted && _playerController != null) setState(() {}); });
     setState(() => _playerReady = true);
     await ctrl.play();
   }
 
   Future<void> _closePlayer() async {
-    await _playerController?.pause();
-    await _playerController?.dispose();
+    final ctrl = _playerController;
     _playerController = null;
+
+    // Update UI immediately before disposal
     if (mounted) setState(() { _playing = null; _playerReady = false; });
+
+    // Dispose after UI has already moved on
+    try {
+      await ctrl?.pause();
+      ctrl?.dispose();  // no await — fire and forget to avoid hangs
+    } catch (_) {}
   }
 
   void _toggleControls() => setState(() => _showControls = !_showControls);
@@ -259,11 +274,9 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
 
   Widget _buildRow(_VideoEntry entry) {
     final name = entry.file.path.split('/').last;
-    final bg   = entry.isSynced ? _syncedBg : _localBg;
-    final badgeBg   = entry.isSynced ? _syncedBadgeBg   : _localBadgeBg;
-    final badgeText = entry.isSynced ? _syncedBadgeText  : _localBadgeText;
-    final badgeLabel = entry.isSynced ? 'Synced' : 'Local';
-    final badgeIcon  = entry.isSynced ? Icons.cloud_done_outlined : Icons.phone_android;
+    final bg   =  _localBg;
+    final badgeBg   = _localBadgeBg;
+
 
     return Material(
       color: bg,
@@ -327,19 +340,27 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
                   border: Border.all(color: badgeBg, width: 1),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(badgeIcon, color: badgeText, size: 12),
-                    const SizedBox(width: 4),
-                    Text(badgeLabel,
-                        style: TextStyle(
-                            color: badgeText,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3)),
-                  ],
-                ),
+                child: // ── Sync badges ─────────────────────────────────────────────
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildBadge(
+                        icon: Icons.phone_android,
+                        label: 'Local',
+                        bg: _localBadgeBg,
+                        textColor: _localBadgeText,
+                      ),
+                      if (entry.isServer) ...[
+                        const SizedBox(width: 6),
+                        _buildBadge(
+                          icon: Icons.cloud_done_outlined,
+                          label: 'Server',
+                          bg: _syncedBadgeBg,
+                          textColor: _syncedBadgeText,
+                        ),
+                      ],
+                    ],
+                  ),
               ),
             ],
           ),
@@ -537,6 +558,35 @@ class _MyVideosScreenState extends State<MyVideosScreen> {
           border: Border.all(color: Colors.white24, width: 1),
         ),
         child: Icon(icon, color: Colors.white70, size: size),
+      ),
+    );
+  }
+
+  Widget _buildBadge({
+    required IconData icon,
+    required String label,
+    required Color bg,
+    required Color textColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg.withOpacity(0.35),
+        border: Border.all(color: bg, width: 1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: textColor, size: 12),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  color: textColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3)),
+        ],
       ),
     );
   }
