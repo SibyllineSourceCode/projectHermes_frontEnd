@@ -249,6 +249,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             await AuthService.instance.api.getActiveListRecipients(
           listId: listId,
         );
+        debugPrint('RAW RECIPIENTS RESPONSE: $recipientsRes');
 
         final recipients = (recipientsRes['contacts'] as List<dynamic>? ?? [])
             .whereType<Map<String, dynamic>>()

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -28,6 +29,13 @@ class ListMember {
   ListMember({required this.name, required this.phone});
 
   Map<String, dynamic> toJson() => {'name': name, 'phone': phone};
+
+  ListMember copyWith({String? name, String? phone}) {
+    return ListMember(
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+    );
+  }
 }
 
 class ListScreen extends StatefulWidget {
@@ -132,16 +140,54 @@ class _ListScreenState extends State<ListScreen> {
     }
   }
 
+  //Methods to normalize phone number (assumes that if there is no area code in the contacts list, 
+  //it is the same area code as current user)
+
+  String _getDeviceCountryCode() {
+    final locale = Platform.localeName; // e.g. "en_US"
+    final country = locale.split('_').last.toUpperCase();
+    const countryDialCodes = {
+      'US': '1', 'CA': '1', 'GB': '44',
+      'AU': '61', 'DE': '49', 'FR': '33',
+      'IN': '91', 'MX': '52', 'BR': '55',
+    };
+    return countryDialCodes[country] ?? '1';
+  }
+
+  String _normalizePhone(String raw, {String fallbackCountryCode = '1'}) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final hasPlus = trimmed.startsWith('+');
+    final digitsOnly = trimmed.replaceAll(RegExp(r'[^\d]'), '');
+    if (digitsOnly.isEmpty) return '';
+    if (hasPlus) return '+$digitsOnly';         // already E.164
+    if (digitsOnly.length > 10) return digitsOnly; // already has country code
+    return '$fallbackCountryCode$digitsOnly';   // local number, prepend country code
+  }
+
+  List<ListMember> formatMembersPhone(List<ListMember> members) {
+    final countryCode = _getDeviceCountryCode();
+    return members.map((m) {
+      final formatted = _normalizePhone(m.phone, fallbackCountryCode: countryCode);
+      return m.copyWith(phone: formatted);
+    }).toList();
+
+  }
+
+  //Modify members in a list
+
   Future<void> _populateList(String listId, List<ListMember> members) async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
+    List<ListMember> membersFormatted = formatMembersPhone(members);
+
     try {
       await AuthService.instance.api.updateLists(
         listID: listId,
-        contacts: members.map((m) => m.toJson()).toList(),
+        contacts: membersFormatted.map((m) => m.toJson()).toList(),
       );
       await _bootstrap();
     } catch (e) {

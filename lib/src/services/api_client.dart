@@ -10,6 +10,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> _authedGet(String path) async {
     final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
+    print('GET $baseUrl$path'); 
     final res = await http.get(
       Uri.parse('$baseUrl$path'),
       headers: {'Authorization': 'Bearer $idToken'},
