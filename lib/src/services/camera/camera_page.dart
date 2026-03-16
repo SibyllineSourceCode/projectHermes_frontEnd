@@ -250,7 +250,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           listId: listId,
         );
 
-        final recipients = (recipientsRes['recipients'] as List<dynamic>? ?? [])
+        final recipients = (recipientsRes['contacts'] as List<dynamic>? ?? [])
             .whereType<Map<String, dynamic>>()
             .toList();
 
