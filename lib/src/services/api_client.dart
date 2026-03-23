@@ -203,6 +203,7 @@ class ApiClient {
     String? sessionId,
   }) => _authedPost("/sos/finalize", {'userId': userId});
   
+  Future<Map<String, dynamic>> getSharedSessions() => _authedGet('/me/shared_sessions');
 
 
 }

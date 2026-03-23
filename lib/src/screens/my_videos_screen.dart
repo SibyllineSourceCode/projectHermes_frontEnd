@@ -5,8 +5,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+// import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/video_storage_utils.dart';
 import '../services/auth_service.dart';
 
@@ -45,6 +45,8 @@ class _SharedEntry {
   final String? finalStoragePath;
   String? streamUrl;         // resolved async (signed GCS URL)
   bool urlAttempted = false;
+  Uint8List? thumbnail;           // add this
+  bool thumbnailAttempted = false; // add this
 
   _SharedEntry({
     required this.sessionId,
@@ -53,6 +55,8 @@ class _SharedEntry {
     this.listTitle,
     this.createdAt,
     this.finalStoragePath,
+    this.streamUrl,
+    this.senderName = '',
   });
 }
 
@@ -94,8 +98,10 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initOwnVideos();
-    _initSharedSessions();
+    _initThumbCache().then((_) {
+      _initOwnVideos();
+      _initSharedSessions();
+    });
   }
 
   @override
@@ -106,6 +112,14 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   }
 
   /* ──────────────────────── My Videos loading ─────────────────────────────── */
+
+  Future<void> _initThumbCache() async {
+    final docs = await getApplicationDocumentsDirectory();
+    _thumbCacheDir = Directory(p.join(docs.path, 'sos_video_thumbs'));
+    if (!await _thumbCacheDir!.exists()) {
+      await _thumbCacheDir!.create(recursive: true);
+    }
+  }
 
   Future<void> _initOwnVideos() async {
     final currentUser   = await AuthService.instance.api.me();
@@ -120,11 +134,6 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         .whereType<String>()
         .toSet();
 
-    final docs = await getApplicationDocumentsDirectory();
-    _thumbCacheDir = Directory(p.join(docs.path, 'sos_video_thumbs'));
-    if (!await _thumbCacheDir!.exists()) {
-      await _thumbCacheDir!.create(recursive: true);
-    }
 
     final diskVideos = await VideoStorageUtils.instance.loadFinalVideos();
 
@@ -146,52 +155,21 @@ class _MyVideosScreenState extends State<MyVideosScreen>
 
   Future<void> _initSharedSessions() async {
     try {
-      final currentUser = await AuthService.instance.api.me();
-      final uid = currentUser['uid'] as String;
 
-      // 1. Read included_sessions from the user's meta doc
-      final metaSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('meta')
-          .doc('included_sessions')
-          .get();
-
-      if (!metaSnap.exists || metaSnap.data() == null) {
-        if (mounted) setState(() => _loadingShared = false);
-        return;
-      }
-
-      // Keys are session IDs, values are `true`
-      final sessionIds = metaSnap.data()!.keys.toList();
-      if (sessionIds.isEmpty) {
-        if (mounted) setState(() => _loadingShared = false);
-        return;
-      }
-
-      // 2. Fetch each sos_session doc (batch in groups of 10 for Firestore whereIn limit)
-      final List<_SharedEntry> results = [];
-      for (var i = 0; i < sessionIds.length; i += 10) {
-        final chunk = sessionIds.sublist(i,
-            (i + 10 < sessionIds.length) ? i + 10 : sessionIds.length);
-        final snap = await FirebaseFirestore.instance
-            .collection('sos_sessions')
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-
-        for (final doc in snap.docs) {
-          final d = doc.data();
-          final ts = d['createdAt'];
-          results.add(_SharedEntry(
-            sessionId:        doc.id,
-            hostUid:          (d['hostUid'] as String?) ?? '',
-            message:          d['message'] as String?,
-            listTitle:        d['listTitle'] as String?,
-            finalStoragePath: d['finalStoragePath'] as String?,
-            createdAt: ts is Timestamp ? ts.toDate() : null,
-          ));
-        }
-      }
+      final response = await AuthService.instance.api.getSharedSessions();
+      final List sessions = response['sessions'] as List;
+      final results = sessions.map((d) => _SharedEntry(
+        sessionId:        d['sessionId'],
+        hostUid:          d['hostUid'] ?? '',
+        message:          d['message'],
+        listTitle:        d['listTitle'],
+        finalStoragePath: d['finalStoragePath'],
+        streamUrl:        d['streamUrl'],
+        senderName:       d['senderName'],
+        createdAt:        d['createdAt'] != null        
+        ? DateTime.parse(d['createdAt']) 
+        : null,
+      )).toList();
 
       // Sort newest first
       results.sort((a, b) {
@@ -203,40 +181,12 @@ class _MyVideosScreenState extends State<MyVideosScreen>
 
       if (!mounted) return;
       setState(() { _shared = results; _loadingShared = false; });
-
-      // 3. Resolve sender usernames + stream URLs lazily
       for (final entry in _shared) {
-        _resolveSenderName(entry);
-        _resolveStreamUrl(entry);
+        _loadSharedThumbnail(entry);
       }
     } catch (e) {
       debugPrint('[SharedSessions] load error: $e');
       if (mounted) setState(() => _loadingShared = false);
-    }
-  }
-
-  Future<void> _resolveSenderName(_SharedEntry entry) async {
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(entry.hostUid)
-          .get();
-      final username = snap.data()?['username'] as String?;
-      if (username != null && mounted) {
-        setState(() => entry.senderName = username);
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _resolveStreamUrl(_SharedEntry entry) async {
-    if (entry.urlAttempted || entry.finalStoragePath == null) return;
-    entry.urlAttempted = true;
-    try {
-      final ref = FirebaseStorage.instance.ref(entry.finalStoragePath!);
-      final url = await ref.getDownloadURL();
-      if (mounted) setState(() => entry.streamUrl = url);
-    } catch (e) {
-      debugPrint('[SharedSessions] URL resolve error for ${entry.sessionId}: $e');
     }
   }
 
@@ -260,6 +210,41 @@ class _MyVideosScreenState extends State<MyVideosScreen>
       try {
         final generated = await VideoThumbnail.thumbnailData(
           video: entry.file.path,
+          imageFormat: ImageFormat.JPEG,
+          maxWidth: 160,
+          quality: 72,
+        );
+        if (generated != null) {
+          bytes = generated;
+          await cacheFile.writeAsBytes(generated);
+        }
+      } catch (_) {}
+    }
+
+    if (bytes != null && mounted) {
+      setState(() => entry.thumbnail = bytes);
+    }
+  }
+
+  Future<void> _loadSharedThumbnail(_SharedEntry entry) async {
+    if (entry.thumbnailAttempted || entry.streamUrl == null) return;
+    entry.thumbnailAttempted = true;
+
+    final cacheDir = _thumbCacheDir;
+    if (cacheDir == null) return;
+
+    final cacheKey  = entry.sessionId.hashCode.toRadixString(16);
+    final cacheFile = File(p.join(cacheDir.path, 'shared_$cacheKey.jpg'));
+
+    Uint8List? bytes;
+
+
+    if (await cacheFile.exists()) {
+      bytes = await cacheFile.readAsBytes();
+    } else {
+      try {
+        final generated = await VideoThumbnail.thumbnailData(
+          video: entry.streamUrl!,
           imageFormat: ImageFormat.JPEG,
           maxWidth: 160,
           quality: 72,
@@ -571,6 +556,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   }
 
   Widget _buildSharedRow(_SharedEntry entry) {
+    
     final isReady   = entry.streamUrl != null;
     final sender    = entry.senderName.isNotEmpty ? entry.senderName : entry.hostUid;
     final dateStr   = _formatDateFromDt(entry.createdAt);
@@ -588,20 +574,24 @@ class _MyVideosScreenState extends State<MyVideosScreen>
               // Avatar / placeholder thumbnail
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Container(
+                child: SizedBox(
                   width: 72, height: 54,
-                  color: const Color(0xFF1A3050).withOpacity(0.6),
-                  child: isReady
-                      ? const Icon(Icons.play_circle_outline,
-                          color: Colors.white54, size: 30)
-                      : const Center(
-                          child: SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: Colors.white24,
-                            ),
-                          ),
+                  child: entry.thumbnail != null
+                      ? Image.memory(entry.thumbnail!, fit: BoxFit.cover)
+                      : Container(
+                          color: const Color(0xFF1A3050).withOpacity(0.6),
+                          child: isReady
+                              ? const Icon(Icons.play_circle_outline,
+                                  color: Colors.white54, size: 30)
+                              : const Center(
+                                  child: SizedBox(
+                                    width: 20, height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                      color: Colors.white24,
+                                    ),
+                                  ),
+                                ),
                         ),
                 ),
               ),
