@@ -274,7 +274,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           Expanded(
                             flex: 2,
                             child: DropdownButtonFormField<_CountryCode>(
-                              value: _country,
+                              initialValue: _country,
                               items: _countries.map((c) {
                                 return DropdownMenuItem<_CountryCode>(
                                   value: c,
