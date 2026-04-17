@@ -174,20 +174,16 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _opBusy = true;
     try {
       final f = await _stopRecordingOnce();
-      _safeEmit(emit, CameraChunkReady(file: f, index: _segmentIndex));
+      await _startRecording();                // ← moved up, before any emits
       _segmentIndex++;
-
-      // Start next segment
-      await _startRecording();
+      _safeEmit(emit, CameraChunkReady(file: f, index: _segmentIndex - 1));
       _safeEmit(emit, CameraReady(isRecordingVideo: true));
     } catch (_) {
-      // Recover: reinit and try restart
       try {
         await _reInitialize();
         await _startRecording();
         _safeEmit(emit, CameraReady(isRecordingVideo: true));
       } catch (_) {
-        // Give up cleanly
         await _stopSegmentedInternal(emit, emitFinalChunk: false);
         _safeEmit(emit, CameraReady(isRecordingVideo: false));
       }
@@ -261,7 +257,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
       _cameraController = await cameraUtils.getCameraController(
         lensDirection: currentLensDirection,
       );
-      await _cameraController!.initialize();
+      await _cameraController!.initialize().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('Camera init timed out'),
+      );
     } finally {
       _isInitializing = false;
     }

@@ -135,12 +135,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       cameraBloc.add(CameraDisable());
     } else if (state == AppLifecycleState.resumed) {
       if (isThisPageVisibe) {
+        // Force a full reset rather than just enable — handles stale controller state
+        cameraBloc.add(CameraReset());
         cameraBloc.add(CameraEnable());
       }
     }

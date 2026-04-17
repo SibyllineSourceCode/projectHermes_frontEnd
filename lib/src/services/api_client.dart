@@ -205,5 +205,7 @@ class ApiClient {
   
   Future<Map<String, dynamic>> getSharedSessions() => _authedGet('/me/shared_sessions');
 
+  Future<Map<String, dynamic>> getMySessions() => _authedGet('/me/my_sessions');
+
 
 }

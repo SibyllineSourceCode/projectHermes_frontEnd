@@ -122,21 +122,22 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   }
 
   Future<void> _initOwnVideos() async {
-    final currentUser   = await AuthService.instance.api.me();
-    final stitchResult  = await AuthService.instance.api.finalizeUser(userId: currentUser['uid']);
+    final currentUser = await AuthService.instance.api.me();
+    
+    // Fire and forget — watcher handles 99% of cases, this catches stragglers
+    AuthService.instance.api.finalizeUser(userId: currentUser['uid'])
+        .catchError((e) {
+          debugPrint('[MyVideos] finalizeUser error: $e');
+          return <String, dynamic>{};
+        });
 
-    final serverSosIds = (stitchResult['finalized'] as List<dynamic>? ?? [])
-        .where((v) => v['ok'] == true && v['finalStoragePath'] != null)
-        .map((v) {
-          final parts = (v['finalStoragePath'] as String).split('/');
-          return parts.length >= 2 ? parts[1] : null;
-        })
+    // Don't await the above — fetch completed sessions immediately
+    final sessionsResult = await AuthService.instance.api.getMySessions();
+    final serverSosIds = ((sessionsResult['sosIds'] as List<dynamic>?) ?? [])
         .whereType<String>()
         .toSet();
 
-
     final diskVideos = await VideoStorageUtils.instance.loadFinalVideos();
-
     final entries = diskVideos.map((f) {
       final isServer = serverSosIds.any((id) => f.path.contains(id));
       return _VideoEntry(file: f, isLocal: true, isServer: isServer);
@@ -147,7 +148,6 @@ class _MyVideosScreenState extends State<MyVideosScreen>
 
     if (!mounted) return;
     setState(() { _entries = entries; _loadingOwn = false; });
-
     for (final e in _entries) { _loadThumbnail(e); }
   }
 
