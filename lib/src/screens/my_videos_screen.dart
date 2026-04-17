@@ -154,41 +154,64 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   /* ──────────────────────── Shared Sessions loading ───────────────────────── */
 
   Future<void> _initSharedSessions() async {
-    try {
+  try {
+    final response = await AuthService.instance.api.getSharedSessions();
+    debugPrint('[SharedSessions] raw response: $response');
 
-      final response = await AuthService.instance.api.getSharedSessions();
-      final List sessions = response['sessions'] as List;
-      final results = sessions.map((d) => _SharedEntry(
-        sessionId:        d['sessionId'],
-        hostUid:          d['hostUid'] ?? '',
+    final rawList = response['sessions'];
+    if (rawList == null) {
+      debugPrint('[SharedSessions] ⚠️ sessions key was null in response');
+      if (mounted) setState(() => _loadingShared = false);
+      return;
+    }
+
+    final List sessions = rawList as List;
+    debugPrint('[SharedSessions] got ${sessions.length} sessions');
+
+    final results = sessions.map((d) {
+      // Skip/stub out error entries the backend flagged
+      if (d['error'] == true) {
+        debugPrint('[SharedSessions] ⚠️ skipping errored session: ${d['sessionId']}');
+        return _SharedEntry(
+          sessionId: d['sessionId'] ?? 'unknown',
+          hostUid:   '',
+          message:   'Error — something went wrong with this video',
+        );
+      }
+
+      return _SharedEntry(
+        sessionId:        d['sessionId'] ?? '',
+        hostUid:          d['hostUid']   ?? '',
         message:          d['message'],
         listTitle:        d['listTitle'],
         finalStoragePath: d['finalStoragePath'],
         streamUrl:        d['streamUrl'],
-        senderName:       d['senderName'],
-        createdAt:        d['createdAt'] != null        
-        ? DateTime.parse(d['createdAt']) 
-        : null,
-      )).toList();
+        senderName:       d['senderName'] ?? '',
+        createdAt:        d['createdAt'] != null
+            ? DateTime.tryParse(d['createdAt'])
+            : null,
+      );
+    }).toList();
 
-      // Sort newest first
-      results.sort((a, b) {
-        if (a.createdAt == null && b.createdAt == null) return 0;
-        if (a.createdAt == null) return 1;
-        if (b.createdAt == null) return -1;
-        return b.createdAt!.compareTo(a.createdAt!);
-      });
+    results.sort((a, b) {
+      if (a.createdAt == null && b.createdAt == null) return 0;
+      if (a.createdAt == null) return 1;
+      if (b.createdAt == null) return -1;
+      return b.createdAt!.compareTo(a.createdAt!);
+    });
 
-      if (!mounted) return;
-      setState(() { _shared = results; _loadingShared = false; });
-      for (final entry in _shared) {
-        _loadSharedThumbnail(entry);
-      }
-    } catch (e) {
-      debugPrint('[SharedSessions] load error: $e');
-      if (mounted) setState(() => _loadingShared = false);
+    if (!mounted) return;
+    setState(() { _shared = results; _loadingShared = false; });
+
+    for (final entry in _shared) {
+      _loadSharedThumbnail(entry);
     }
+  } catch (e, stack) {
+    debugPrint('[SharedSessions] ❌ load error: $e');
+    debugPrint('[SharedSessions] stack: $stack');
+    if (mounted) setState(() => _loadingShared = false);
   }
+}
 
   /* ──────────────────────── Thumbnails ───────────────────────────────────── */
 

@@ -21,6 +21,7 @@ import '../../widgets/active_list_pill.dart';
 import '../../services/auth_service.dart';
 import '../../screens/settings_screen.dart';
 import '../../screens/my_videos_screen.dart';
+import '../../services/hardening/chunk_upload_queue.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -116,11 +117,15 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     super.initState();
     cameraBloc = BlocProvider.of<CameraBloc>(context);
     WidgetsBinding.instance.addObserver(this);
-
+ 
     _loadActiveList();
     _loadSavedVideosFromDisk();
-    _recoverOrphanedSessions(); // heal any crash leftovers on startup
+    _recoverOrphanedSessions();
+ 
+    // Resume any uploads that were interrupted by a crash or signal loss.
+    ChunkUploadQueue.instance.recoverAll();           // <-- add this line
   }
+ 
 
   @override
   void dispose() {
@@ -272,10 +277,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           sosServerId = res['sosId']?.toString();
         });
 
-        setState(() {
-          sosServerId = res['sosId']?.toString();
-        });
-
         debugPrint('[CameraPage] sosServerId set to: $sosServerId');
         debugPrint('[CameraPage] pending chunks: ${_pendingChunks.length}');
 
@@ -307,23 +308,16 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     final sosId = sosServerId;
     debugPrint('[CameraPage] _flushPendingChunks: sosId=$sosId, pending=${_pendingChunks.length}');
     if (sosId == null || _pendingChunks.isEmpty) return;
-
-    // Drain the queue into a local list so new arrivals don't interfere.
+ 
     final toUpload = List<CameraChunkReady>.from(_pendingChunks);
     _pendingChunks.clear();
-
+ 
     for (final chunk in toUpload) {
-      try {
-        await AuthService.instance.api.uploadSosChunk(
-          sosId: sosId,
-          index: chunk.index,
-          file: chunk.file,
-        );
-        debugPrint('[CameraPage] Uploaded chunk ${chunk.index}');
-      } catch (e) {
-        debugPrint('[CameraPage] Chunk upload failed ${chunk.index}: $e');
-        // Chunk is already on disk – server can request a retry later.
-      }
+      await ChunkUploadQueue.instance.enqueue(
+        sosId: sosId,
+        index: chunk.index,
+        chunkFile: chunk.file,
+      );
     }
   }
 
