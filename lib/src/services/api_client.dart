@@ -170,12 +170,14 @@ class ApiClient {
     required String message,
     required List<Map<String, dynamic>> recipients,
     required Map<String, dynamic> extraContext,
+    String? geolocation
   }) => _authedPost('/sos/create', {
     'listId': listId,
     'listTitle': listTitle,
     'message': message,
     'recipients': recipients,
     'extra': extraContext,
+     if (geolocation != null) 'geolocation': geolocation,
   });
 
   Future<Map<String, dynamic>> uploadSosChunk({

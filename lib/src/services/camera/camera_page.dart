@@ -11,6 +11,7 @@ import 'package:project_hermes_front_end/src/enums/camera_enums.dart';
 import 'package:project_hermes_front_end/src/utils/video_storage_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'package:visibility_detector/visibility_detector.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'camera_bloc.dart';
 import 'camera_state.dart';
@@ -52,6 +53,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   // Chunks that arrived before the SOS ID was ready.
   final List<CameraChunkReady> _pendingChunks = [];
+  bool _locationEnabled = false;
+  String? _currentGeolocation;
 
   /* ---------------- Helpers ---------------- */
 
@@ -108,6 +111,62 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     sessionId = null;
     sessionStartTime = null;
     _pendingChunks.clear();
+    _locationEnabled = false;
+    _currentGeolocation = null;
+  }
+
+  Future<void> _toggleLocationPin() async {
+    if (_locationEnabled) {
+      setState(() {
+        _locationEnabled = false;
+        _currentGeolocation = null;
+      });
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black54,
+          content: Text('Location permission denied.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      final coords =
+          '${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)}';
+      setState(() {
+        _locationEnabled = true;
+        _currentGeolocation = coords;
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.black54,
+          content: Text('📍 Location pinned: $coords'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black54,
+          content: Text('Could not get location. Try again.'),
+        ),
+      );
+    }
   }
 
   /* ---------------- Lifecycle ---------------- */
@@ -271,6 +330,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             'startedAtUtc': startedAt.toIso8601String(),
             'type': 'segmented_upload',
           },
+          geolocation: _currentGeolocation,
         );
 
         if (!mounted) return;
@@ -455,6 +515,31 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 ),
               ),
 
+              // --- Top-center: Location Beacon ---
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 12,
+                left: 0,
+                right: 0,
+                child: Visibility(
+                  visible: !disableButtons,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: _toggleLocationPin,
+                      child: CircleAvatar(
+                        backgroundColor: _locationEnabled
+                            ? Colors.red.withOpacity(0.85)
+                            : Colors.white.withOpacity(0.5),
+                        radius: 25,
+                        child: Icon(
+                          Icons.cell_tower,
+                          color: _locationEnabled ? Colors.white : Colors.black,
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
               // --- Top-right: Settings ---
               Positioned(
                 top: MediaQuery.of(context).padding.top + 12,

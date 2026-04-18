@@ -1,10 +1,10 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:flutter/services.dart';
 // import 'package:cloud_firestore/cloud_firestore.dart';
 // import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/video_storage_utils.dart';
@@ -38,15 +38,16 @@ class _VideoEntry {
 class _SharedEntry {
   final String sessionId;
   final String hostUid;
-  String senderName = '';         // resolved async
+  String senderName = '';
   final String? message;
   final String? listTitle;
   final DateTime? createdAt;
   final String? finalStoragePath;
-  String? streamUrl;         // resolved async (signed GCS URL)
+  final String? geolocation;        // ← new
+  String? streamUrl;
   bool urlAttempted = false;
-  Uint8List? thumbnail;           // add this
-  bool thumbnailAttempted = false; // add this
+  Uint8List? thumbnail;
+  bool thumbnailAttempted = false;
 
   _SharedEntry({
     required this.sessionId,
@@ -57,6 +58,7 @@ class _SharedEntry {
     this.finalStoragePath,
     this.streamUrl,
     this.senderName = '',
+    this.geolocation,               // ← new
   });
 }
 
@@ -187,6 +189,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         finalStoragePath: d['finalStoragePath'],
         streamUrl:        d['streamUrl'],
         senderName:       d['senderName'] ?? '',
+        geolocation:      d['geolocation'] as String?,   // ← new
         createdAt:        d['createdAt'] != null
             ? DateTime.tryParse(d['createdAt'])
             : null,
@@ -711,6 +714,70 @@ class _MyVideosScreenState extends State<MyVideosScreen>
           child: Column(
             children: [
               const SizedBox(height: 60),
+
+              // ── Geolocation banner ─────────────────────────────────────────────
+              if (_playingShared?.geolocation != null) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    onTap: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: _playingShared!.geolocation!),
+                      );
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          backgroundColor: Color(0xFF1A2030),
+                          duration: Duration(seconds: 2),
+                          content: Row(
+                            children: [
+                              Icon(Icons.check_circle_outline,
+                                  color: Color(0xFFADD8F7), size: 16),
+                              SizedBox(width: 8),
+                              Text(
+                                'Coordinates copied to clipboard',
+                                style: TextStyle(color: Colors.white, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A2030).withOpacity(0.85),
+                        border: Border.all(color: const Color(0xFF1E4D6B), width: 1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_on,
+                              color: Color(0xFFADD8F7), size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _playingShared!.geolocation!,
+                              style: const TextStyle(
+                                color: Color(0xFFADD8F7),
+                                fontSize: 13,
+                                fontFamily: 'Montserrat',
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.copy,
+                              color: Color(0xFF6B9EC8), size: 14),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
 
               // ── Video frame ────────────────────────────────────────────
               Expanded(
