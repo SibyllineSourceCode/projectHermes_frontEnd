@@ -140,6 +140,25 @@ class _ListScreenState extends State<ListScreen> {
     }
   }
 
+  Future<void> _deleteList(ListItem list) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await AuthService.instance.api.deleteList(listId: list.id);
+      await _bootstrap();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+
+  }
+
   //Methods to normalize phone number (assumes that if there is no area code in the contacts list, 
   //it is the same area code as current user)
 
@@ -436,6 +455,7 @@ class _ListScreenState extends State<ListScreen> {
                 title: const Text('Delete'),
                 onTap: () {
                   Navigator.pop(ctx);
+                  _deleteList(_lists[idx]);
                   setState(() => _lists.removeAt(idx));
                 },
               ),

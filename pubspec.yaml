@@ -53,6 +53,7 @@ dependencies:
   video_thumbnail: ^0.5.3
   firebase_storage: ^13.1.0
   geolocator: ^13.0.0
+  gal: ^2.3.0
 
 dev_dependencies:
   flutter_test:

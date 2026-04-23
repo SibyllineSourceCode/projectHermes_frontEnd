@@ -34,6 +34,16 @@ class ApiClient {
     return _decode(res);
   }
 
+  Future<Map<String,dynamic>> _authedDelete(String path) async {
+    final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
+    print('GET $baseUrl$path'); 
+    final res = await http.delete(
+      Uri.parse('$baseUrl$path'),
+      headers: {'Authorization': 'Bearer $idToken'},
+    );
+    return _decode(res);
+  }
+
   Future<Map<String, dynamic>> _authedMultipartPost(
   String path, {
   required Map<String, String> fields,
@@ -163,6 +173,8 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getActiveListRecipients({required String listId
   }) => _authedGet('/lists/$listId/contacts');
+
+  Future<Map<String,dynamic>> deleteList({required String listId}) => _authedDelete('/lists/$listId');
 
   Future<Map<String, dynamic>> createSos({
     required String listId,

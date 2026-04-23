@@ -56,26 +56,24 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   bool _locationEnabled = false;
   String? _currentGeolocation;
 
+  bool _activeListLoading = true;
+
   /* ---------------- Helpers ---------------- */
 
   Future<void> _loadActiveList() async {
     try {
       final data = await AuthService.instance.api.getActiveList();
       final active = data['active'];
-
-      final id =
-          (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
-      final title =
-          (active is Map<String, dynamic>) ? active['title']?.toString() : null;
-
+      final id = (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
+      final title = (active is Map<String, dynamic>) ? active['title']?.toString() : null;
       if (!mounted) return;
       setState(() {
         _activeListId = (id != null && id.isNotEmpty) ? id : null;
-        _activeListTitle =
-            (title != null && title.trim().isNotEmpty) ? title.trim() : null;
+        _activeListTitle = (title != null && title.trim().isNotEmpty) ? title.trim() : null;
+        _activeListLoading = false;  // ← add this
       });
     } catch (_) {
-      // non-fatal
+      if (mounted) setState(() => _activeListLoading = false);
     }
   }
 
@@ -445,8 +443,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     final bool disableButtons = !(isReady && !isRecording);
 
     final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
-    final pillTitle =
-        hasActiveList ? (_activeListTitle ?? 'Active list') : 'No active list';
+    final pillTitle = _activeListLoading
+        ? 'Loading...'
+        : hasActiveList
+            ? (_activeListTitle ?? 'Active list')
+            : 'No active list';
 
     final controller = cameraBloc.getController();
     final canPreview = isReady && _controllerUsable(controller);

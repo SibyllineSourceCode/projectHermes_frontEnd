@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 // import 'package:cloud_firestore/cloud_firestore.dart';
 // import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/video_storage_utils.dart';
@@ -48,6 +49,7 @@ class _SharedEntry {
   bool urlAttempted = false;
   Uint8List? thumbnail;
   bool thumbnailAttempted = false;
+  bool isDownloading = false;
 
   _SharedEntry({
     required this.sessionId,
@@ -215,6 +217,68 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     if (mounted) setState(() => _loadingShared = false);
   }
 }
+
+  /* ──────────────────────── Download ─────────────────────────────────────── */
+
+  Future<void> _downloadShared(_SharedEntry entry) async {
+    final url = entry.streamUrl;
+    if (url == null || entry.isDownloading) return;
+
+    setState(() => entry.isDownloading = true);
+
+    try {
+      final tempDir  = await getTemporaryDirectory();
+      final tempFile = File(p.join(tempDir.path, '${entry.sessionId}.mp4'));
+
+      final client   = HttpClient();
+      final request  = await client.getUrl(Uri.parse(url));
+      final response = await request.close();
+      final sink     = tempFile.openWrite();
+      await response.pipe(sink);
+      await sink.flush();
+      await sink.close();
+      client.close();
+
+      await Gal.putVideo(tempFile.path);
+      await tempFile.delete().catchError((_) => tempFile);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF1A2030),
+          duration: Duration(seconds: 2),
+          content: Row(
+            children: [
+              Icon(Icons.check_circle_outline,
+                  color: Color(0xFFADD8F7), size: 16),
+              SizedBox(width: 8),
+              Text('Saved to your videos',
+                  style: TextStyle(color: Colors.white, fontSize: 13)),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Download] ❌ error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF3A1A1A),
+          duration: Duration(seconds: 3),
+          content: Row(
+            children: [
+              Icon(Icons.error_outline, color: Color(0xFFF7C9AD), size: 16),
+              SizedBox(width: 8),
+              Text('Download failed — please try again',
+                  style: TextStyle(color: Colors.white, fontSize: 13)),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => entry.isDownloading = false);
+    }
+  }
 
   /* ──────────────────────── Thumbnails ───────────────────────────────────── */
 
@@ -522,9 +586,10 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                 ),
               ),
               const SizedBox(width: 8),
-              // Badges
-              Row(
+              // Badges — stacked vertically
+              Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   _buildBadge(
                     icon: Icons.phone_android,
@@ -533,7 +598,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                     textColor: _localBadgeText,
                   ),
                   if (entry.isServer) ...[
-                    const SizedBox(width: 6),
+                    const SizedBox(height: 6),
                     _buildBadge(
                       icon: Icons.cloud_done_outlined,
                       label: 'Server',
@@ -669,12 +734,22 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                 ),
               ),
               const SizedBox(width: 8),
-              // Badge
-              _buildBadge(
-                icon: isReady ? Icons.cloud_done_outlined : Icons.cloud_outlined,
-                label: isReady ? 'Ready' : 'Loading',
-                bg: isReady ? _sharedBadgeBg : const Color(0xFF3A3A3A),
-                textColor: isReady ? _sharedBadgeText : Colors.white38,
+              // Badge + download button
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _buildBadge(
+                    icon: isReady ? Icons.cloud_done_outlined : Icons.cloud_outlined,
+                    label: isReady ? 'Ready' : 'Loading',
+                    bg: isReady ? _sharedBadgeBg : const Color(0xFF3A3A3A),
+                    textColor: isReady ? _sharedBadgeText : Colors.white38,
+                  ),
+                  if (isReady) ...[
+                    const SizedBox(height: 6),
+                    _buildDownloadButton(entry),
+                  ],
+                ],
               ),
             ],
           ),
@@ -937,6 +1012,46 @@ class _MyVideosScreenState extends State<MyVideosScreen>
           border: Border.all(color: Colors.white24, width: 1),
         ),
         child: Icon(icon, color: Colors.white70, size: size),
+      ),
+    );
+  }
+
+  Widget _buildDownloadButton(_SharedEntry entry) {
+    return GestureDetector(
+      onTap: () => _downloadShared(entry),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A3020).withOpacity(0.5),
+          border: Border.all(color: const Color(0xFF2E6B3E), width: 1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (entry.isDownloading)
+              const SizedBox(
+                width: 10, height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: Color(0xFF7EC89A),
+                ),
+              )
+            else
+              const Icon(Icons.download_outlined,
+                  color: Color(0xFF7EC89A), size: 12),
+            const SizedBox(width: 4),
+            Text(
+              entry.isDownloading ? 'Saving…' : 'Save',
+              style: const TextStyle(
+                color: Color(0xFF7EC89A),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
