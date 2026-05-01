@@ -202,8 +202,15 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _stopUiTimer();
 
     // Wait for any in-flight cut
+    int spinMs = 0;
     while (_opBusy) {
       await Future.delayed(const Duration(milliseconds: 30));
+      spinMs += 30;
+      if (spinMs > 2000) { // 2 second hard escape
+        debugPrint('⚠️ [CameraBloc] _opBusy stuck — forcing reset');
+        _opBusy = false;
+        break;
+      }
     }
 
     if (!isRecording()) return;
@@ -275,6 +282,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _segmentTimer?.cancel();
     _segmentTimer = null;
     _stopUiTimer();
+    _isInitializing = false;
 
     final ctrl = _cameraController;
     _cameraController = null; // detach first to reduce UI races
