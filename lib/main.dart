@@ -23,7 +23,9 @@ void main() async {
     print("Foreground notification: ${message.notification?.title}");
   });
 
-  AuthService.init('https://us-central1-project-hermes-d667b.cloudfunctions.net/api');
+  AuthService.init(
+    'https://us-central1-project-hermes-d667b.cloudfunctions.net/api',
+  );
   runApp(const MyApp());
 }
 
@@ -31,11 +33,25 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4));
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Project Hermes',
-      theme: ThemeData(useMaterial3: true, colorScheme: scheme),
+      title: 'Beacon',
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0E0C0A),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF140E08),
+          foregroundColor: Color(0xFFE8E4DC),
+        ),
+        dialogBackgroundColor: const Color(0xFF1A1610),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Color(0xFF1A1610),
+        ),
+        colorScheme: ColorScheme.dark(
+          surface: const Color(0xFF1E1C18),
+          onSurface: const Color(0xFFE8E4DC),
+        ),
+      ),
       home: StreamBuilder(
         stream: AuthService.instance.authStateChanges,
         builder: (context, snapshot) {
