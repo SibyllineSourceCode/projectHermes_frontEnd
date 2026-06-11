@@ -33,4 +33,13 @@ class AppSettings {
       await prefs.setString('active_list_title', title ?? '');
     }
   }
+
+  Future<void> clear() async {
+    recordingDurationLimit = 60;
+    activeListId = null;
+    activeListTitle = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_list_id');
+    await prefs.remove('active_list_title');
+  }
 }

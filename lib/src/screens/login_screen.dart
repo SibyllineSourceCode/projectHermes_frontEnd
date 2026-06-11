@@ -53,7 +53,11 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.lock_outline, size: 64),
+                Image.asset(
+                  'assets/images/Beacon_transparent_back.png',
+                  width: 120,
+                  height: 120,
+                ),
                 const SizedBox(height: 12),
                 Text(
                   'Welcome back',
@@ -62,10 +66,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 6),
                 Text(
                   'Sign in to continue',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.black54),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
                 ),
                 const SizedBox(height: 24),
                 Card(
@@ -79,12 +82,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           TextFormField(
                             controller: _email,
                             keyboardType: TextInputType.emailAddress,
-                            decoration:
-                                const InputDecoration(labelText: 'Email'),
-                            validator: (v) =>
-                                v != null && v.contains('@')
-                                    ? null
-                                    : 'Enter a valid email',
+                            decoration: const InputDecoration(
+                              labelText: 'Email',
+                            ),
+                            validator:
+                                (v) =>
+                                    v != null && v.contains('@')
+                                        ? null
+                                        : 'Enter a valid email',
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
@@ -93,16 +98,20 @@ class _LoginScreenState extends State<LoginScreen> {
                             decoration: InputDecoration(
                               labelText: 'Password',
                               suffixIcon: IconButton(
-                                onPressed: () =>
-                                    setState(() => _obscure = !_obscure),
-                                icon: Icon(_obscure
-                                    ? Icons.visibility
-                                    : Icons.visibility_off),
+                                onPressed:
+                                    () => setState(() => _obscure = !_obscure),
+                                icon: Icon(
+                                  _obscure
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
+                                ),
                               ),
                             ),
-                            validator: (v) => (v != null && v.length >= 6)
-                                ? null
-                                : 'Min 6 characters',
+                            validator:
+                                (v) =>
+                                    (v != null && v.length >= 6)
+                                        ? null
+                                        : 'Min 6 characters',
                           ),
                           const SizedBox(height: 16),
                           SizedBox(
@@ -110,11 +119,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             height: 48,
                             child: FilledButton(
                               onPressed: _busy ? null : _handleLogin,
-                              child: _busy
-                                  ? const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    )
-                                  : const Text('Sign In'),
+                              child:
+                                  _busy
+                                      ? const CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      )
+                                      : const Text('Sign In'),
                             ),
                           ),
                         ],
@@ -128,11 +138,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     const Text('New here?'),
                     TextButton(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const RegisterScreen(),
-                        ),
-                      ),
+                      onPressed:
+                          () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const RegisterScreen(),
+                            ),
+                          ),
                       child: const Text('Create an account'),
                     ),
                   ],

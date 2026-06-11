@@ -36,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _logout() async {
     final navigator = Navigator.of(context);
+    await AppSettings.instance.clear();
     await FirebaseAuth.instance.signOut();
     navigator.popUntil((route) => route.isFirst);
   }
