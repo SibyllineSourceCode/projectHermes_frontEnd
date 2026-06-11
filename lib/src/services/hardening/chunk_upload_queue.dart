@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -14,11 +15,11 @@ import '../../services/auth_service.dart';
 ///   - Persists pending chunks to disk so they survive app restarts and crashes.
 ///   - Retries failed uploads automatically using exponential back-off.
 ///   - Resumes uploading when connectivity is restored (call [onConnectivityRestored]).
-///   - Is keyed per-[sosId] so multiple sessions never interfere.
+///   - Is keyed per-sosId so multiple sessions never interfere.
 ///
 /// Usage in CameraPage:
-///   1. Call [ChunkUploadQueue.instance.enqueue] instead of uploading directly.
-///   2. Call [ChunkUploadQueue.instance.onConnectivityRestored] from a
+///   1. Call ChunkUploadQueue.instance.enqueue instead of uploading directly.
+///   2. Call ChunkUploadQueue.instance.onConnectivityRestored from a
 ///      connectivity listener when network comes back.
 ///   3. Nothing else in the app needs to change.
 
@@ -49,8 +50,9 @@ class ChunkUploadQueue {
 
   /// Directory where queue manifests are stored.
   Future<Directory> get _queueDir async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
     final base = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(base.path, 'chunk_queue'));
+    final dir = Directory(p.join(base.path, 'chunk_queue', uid));
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
@@ -70,7 +72,11 @@ class ChunkUploadQueue {
     required int index,
     required File chunkFile,
   }) async {
-    final chunk = _QueuedChunk(sosId: sosId, index: index, filePath: chunkFile.path);
+    final chunk = _QueuedChunk(
+      sosId: sosId,
+      index: index,
+      filePath: chunkFile.path,
+    );
 
     _queues.putIfAbsent(sosId, () => []);
     // Avoid double-queueing the same index
@@ -115,7 +121,9 @@ class ChunkUploadQueue {
           continue;
         }
         _queues[sosId] = chunks;
-        debugPrint('[Queue] recovered ${chunks.length} chunks for session $sosId');
+        debugPrint(
+          '[Queue] recovered ${chunks.length} chunks for session $sosId',
+        );
         _ensureLoopRunning(sosId);
       } catch (e) {
         debugPrint('[Queue] error recovering queue file ${file.path}: $e');
@@ -172,7 +180,9 @@ class ChunkUploadQueue {
         await _persistQueue(sosId);
         // If ALL remaining chunks are maxed out, stop the loop
         if (queue.every((c) => c.attempts >= _maxAttempts)) {
-          debugPrint('[Queue] all remaining chunks maxed out for $sosId — stopping loop');
+          debugPrint(
+            '[Queue] all remaining chunks maxed out for $sosId — stopping loop',
+          );
           _loopRunning.remove(sosId);
           return;
         }
@@ -211,9 +221,7 @@ class ChunkUploadQueue {
 
   Duration _backOffDelay(int attempt) {
     final ms = _baseDelay.inMilliseconds * (1 << attempt); // 2^attempt
-    return Duration(
-      milliseconds: ms.clamp(0, _maxDelay.inMilliseconds),
-    );
+    return Duration(milliseconds: ms.clamp(0, _maxDelay.inMilliseconds));
   }
 
   // ── Persistence ───────────────────────────────────────────────────────────────
@@ -240,7 +248,9 @@ class ChunkUploadQueue {
       if (!file.existsSync()) return [];
       final raw = await file.readAsString();
       final list = jsonDecode(raw) as List<dynamic>;
-      return list.map((j) => _QueuedChunk.fromJson(j as Map<String, dynamic>)).toList();
+      return list
+          .map((j) => _QueuedChunk.fromJson(j as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       debugPrint('[Queue] failed to load queue for $sosId: $e');
       return [];

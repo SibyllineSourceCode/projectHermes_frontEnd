@@ -111,7 +111,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String _composePhoneE164() {
     var digits = _phone.text.trim().replaceAll(RegExp(r'\D'), '');
-    final ccDigits = _country.dialCode.replaceAll(RegExp(r'\D'), ''); // "1", "44", etc.
+    final ccDigits = _country.dialCode.replaceAll(
+      RegExp(r'\D'),
+      '',
+    ); // "1", "44", etc.
 
     // If user pasted a full international number including country code, avoid doubling it.
     if (digits.startsWith(ccDigits) && digits.length > ccDigits.length + 6) {
@@ -142,7 +145,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
   }
 
-
   Future<void> _doRegister({
     required String username,
     required String email,
@@ -151,8 +153,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }) async {
     try {
       // Optional: add a debug print so you can verify nothing is empty
-      debugPrint('Register payload: u="$username" e="$email" pLen=${password.length} phone="$phoneE164"');
-      print('Register payload: u="$username" e="$email" pLen=${password.length} phone="$phoneE164"');
+      debugPrint(
+        'Register payload: u="$username" e="$email" pLen=${password.length} phone="$phoneE164"',
+      );
 
       await AuthService.instance.register(
         email: email,
@@ -161,7 +164,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phoneE164: phoneE164,
       );
 
-      await FirebaseAuth.instance.authStateChanges().firstWhere((u) => u != null);
+      await FirebaseAuth.instance.authStateChanges().firstWhere(
+        (u) => u != null,
+      );
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
@@ -174,13 +179,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  Future<void>_verifyPhone({
+  Future<void> _verifyPhone({
     required String username,
     required String email,
     required String password,
     required String phone,
   }) async {
-
     // TODO: trigger SMS send here (Firebase Phone Auth or your backend)
     // await AuthService.instance.api.sendPhoneCode(phone: phone);
 
@@ -225,7 +229,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       password: password,
       phoneE164: phone,
     );
-
   }
 
   @override
@@ -250,7 +253,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       TextFormField(
                         controller: _username,
                         enabled: !_busy,
-                        decoration: const InputDecoration(labelText: 'Username'),
+                        decoration: const InputDecoration(
+                          labelText: 'Username',
+                        ),
                         validator: _validateUsername,
                         textInputAction: TextInputAction.next,
                       ),
@@ -261,8 +266,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         enabled: !_busy,
                         keyboardType: TextInputType.emailAddress,
                         decoration: const InputDecoration(labelText: 'Email'),
-                        validator: (v) =>
-                            v != null && v.contains('@') ? null : 'Enter a valid email',
+                        validator:
+                            (v) =>
+                                v != null && v.contains('@')
+                                    ? null
+                                    : 'Enter a valid email',
                         textInputAction: TextInputAction.next,
                       ),
                       const SizedBox(height: 12),
@@ -275,29 +283,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             flex: 2,
                             child: DropdownButtonFormField<_CountryCode>(
                               initialValue: _country,
-                              items: _countries.map((c) {
-                                return DropdownMenuItem<_CountryCode>(
-                                  value: c,
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '${c.name} (${c.dialCode})',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
+                              items:
+                                  _countries.map((c) {
+                                    return DropdownMenuItem<_CountryCode>(
+                                      value: c,
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              '${c.name} (${c.dialCode})',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
+                                    );
+                                  }).toList(),
 
-                              onChanged: _busy
-                                  ? null
-                                  : (v) {
-                                      if (v == null) return;
-                                      setState(() => _country = v);
-                                    },
+                              onChanged:
+                                  _busy
+                                      ? null
+                                      : (v) {
+                                        if (v == null) return;
+                                        setState(() => _country = v);
+                                      },
                               decoration: const InputDecoration(
                                 labelText: 'Country',
                               ),
@@ -343,16 +353,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         decoration: InputDecoration(
                           labelText: 'Password',
                           suffixIcon: IconButton(
-                            onPressed: _busy
-                                ? null
-                                : () => setState(() => _obscure1 = !_obscure1),
-                            icon: Icon(_obscure1
-                                ? Icons.visibility
-                                : Icons.visibility_off),
+                            onPressed:
+                                _busy
+                                    ? null
+                                    : () =>
+                                        setState(() => _obscure1 = !_obscure1),
+                            icon: Icon(
+                              _obscure1
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
                           ),
                         ),
-                        validator: (v) =>
-                            (v != null && v.length >= 6) ? null : 'Min 6 characters',
+                        validator:
+                            (v) =>
+                                (v != null && v.length >= 6)
+                                    ? null
+                                    : 'Min 6 characters',
                         textInputAction: TextInputAction.next,
                       ),
                       const SizedBox(height: 12),
@@ -364,16 +381,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         decoration: InputDecoration(
                           labelText: 'Confirm Password',
                           suffixIcon: IconButton(
-                            onPressed: _busy
-                                ? null
-                                : () => setState(() => _obscure2 = !_obscure2),
-                            icon: Icon(_obscure2
-                                ? Icons.visibility
-                                : Icons.visibility_off),
+                            onPressed:
+                                _busy
+                                    ? null
+                                    : () =>
+                                        setState(() => _obscure2 = !_obscure2),
+                            icon: Icon(
+                              _obscure2
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
                           ),
                         ),
-                        validator: (v) =>
-                            v == _password.text ? null : 'Passwords do not match',
+                        validator:
+                            (v) =>
+                                v == _password.text
+                                    ? null
+                                    : 'Passwords do not match',
                         // no onFieldSubmitted to avoid double submit races
                       ),
                       const SizedBox(height: 16),
@@ -382,21 +406,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         width: double.infinity,
                         height: 48,
                         child: FilledButton(
-                          onPressed: _busy
-                          ? null
-                          : () async {
-                              if (!_formKey.currentState!.validate()) return;
+                          onPressed:
+                              _busy
+                                  ? null
+                                  : () async {
+                                    if (!_formKey.currentState!.validate()) {
+                                      return;
+                                    }
 
-                              await _verifyPhone(
-                                username: _username.text.trim(),
-                                email: _email.text.trim(),
-                                password: _password.text,
-                                phone: _composePhoneE164(),
-                              );
-                            },
-                          child: _busy
-                              ? const CircularProgressIndicator(strokeWidth: 2)
-                              : const Text('Create Account'),
+                                    await _verifyPhone(
+                                      username: _username.text.trim(),
+                                      email: _email.text.trim(),
+                                      password: _password.text,
+                                      phone: _composePhoneE164(),
+                                    );
+                                  },
+                          child:
+                              _busy
+                                  ? const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  )
+                                  : const Text('Create Account'),
                         ),
                       ),
                     ],
@@ -412,10 +442,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 }
 
 class _CodeBoxes extends StatelessWidget {
-  const _CodeBoxes({
-    required this.code,
-    required this.length,
-  });
+  const _CodeBoxes({required this.code, required this.length});
 
   final String code; // digits only
   final int length;
@@ -447,9 +474,9 @@ class _CodeBoxes extends StatelessWidget {
               child: Text(
                 filled ? ch : '',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
-                    ),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                ),
               ),
             ),
           ),
@@ -458,8 +485,6 @@ class _CodeBoxes extends StatelessWidget {
     );
   }
 }
-
-
 
 class PhoneVerifySheet extends StatefulWidget {
   const PhoneVerifySheet({
@@ -520,14 +545,14 @@ class _PhoneVerifySheetState extends State<PhoneVerifySheet> {
     try {
       await widget.onResend();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification code resent')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Verification code resent')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Resend failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Resend failed: $e')));
     } finally {
       if (mounted) setState(() => _resending = false);
     }
@@ -555,14 +580,14 @@ class _PhoneVerifySheetState extends State<PhoneVerifySheet> {
                   Expanded(
                     child: Text(
                       'Verify your phone',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w800),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   IconButton(
-                    onPressed: _submitting ? null : () => Navigator.pop(context),
+                    onPressed:
+                        _submitting ? null : () => Navigator.pop(context),
                     icon: const Icon(Icons.close),
                   ),
                 ],
@@ -580,10 +605,7 @@ class _PhoneVerifySheetState extends State<PhoneVerifySheet> {
               // Tap area that focuses the hidden input
               GestureDetector(
                 onTap: () => _focusNode.requestFocus(),
-                child: _CodeBoxes(
-                  code: _digits,
-                  length: 6,
-                ),
+                child: _CodeBoxes(code: _digits, length: 6),
               ),
 
               // Hidden text field that collects digits
@@ -615,7 +637,8 @@ class _PhoneVerifySheetState extends State<PhoneVerifySheet> {
                   ),
                   const Spacer(),
                   TextButton(
-                    onPressed: _submitting ? null : () => Navigator.pop(context),
+                    onPressed:
+                        _submitting ? null : () => Navigator.pop(context),
                     child: const Text('Change number'),
                   ),
                 ],
@@ -631,13 +654,14 @@ class _PhoneVerifySheetState extends State<PhoneVerifySheet> {
                 height: 48,
                 child: FilledButton(
                   onPressed: (_isComplete && !_submitting) ? _complete : null,
-                  child: _submitting
-                      ? const SizedBox(
-                          height: 18,
-                          width: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Complete registration'),
+                  child:
+                      _submitting
+                          ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Text('Complete registration'),
                 ),
               ),
             ],

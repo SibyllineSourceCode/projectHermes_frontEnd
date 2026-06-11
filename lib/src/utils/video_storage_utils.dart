@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+
 /// Manages local storage of SOS video chunks and final stitched videos.
 ///
 /// Directory structure:
@@ -22,8 +24,9 @@ class VideoStorageUtils {
   // ── Paths ──────────────────────────────────────────────────────────────────
 
   Future<Directory> get _sosVideosDir async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
     final docs = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(docs.path, 'sos_videos'));
+    final dir = Directory(p.join(docs.path, 'sos_videos', uid));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
@@ -79,12 +82,13 @@ class VideoStorageUtils {
       final base = await _sosVideosDir;
 
       // Collect chunks in order.
-      final chunks = dir
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.toLowerCase().endsWith('.mp4'))
-          .toList()
-        ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
+      final chunks =
+          dir
+              .listSync()
+              .whereType<File>()
+              .where((f) => f.path.toLowerCase().endsWith('.mp4'))
+              .toList()
+            ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
 
       if (chunks.isEmpty) {
         debugPrint('[VideoStorage] No chunks found for session $sessionId');
@@ -152,12 +156,13 @@ class VideoStorageUtils {
 
     for (final entry in dir.listSync().whereType<Directory>()) {
       final sessionId = p.basename(entry.path);
-      final chunks = entry
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.toLowerCase().endsWith('.mp4'))
-          .toList()
-        ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
+      final chunks =
+          entry
+              .listSync()
+              .whereType<File>()
+              .where((f) => f.path.toLowerCase().endsWith('.mp4'))
+              .toList()
+            ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
 
       if (chunks.isNotEmpty) {
         orphans[sessionId] = chunks;

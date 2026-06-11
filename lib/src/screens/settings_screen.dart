@@ -1,37 +1,144 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/app_settings.dart';
 
 // ── Beacon Palette — Settings Screen ─────────────────────────────────────────
-//  Charcoal/wood base with ember accents showing through on setting items
-// ─────────────────────────────────────────────────────────────────────────────
-
 const _bgScaffold = Color(0xFF0E0C0A);
 const _bgAppBar = Color(0xFF140E08);
-const _bgSection = Color(0xFF1E1C18); // warm charcoal — setting group bg
-const _bgItemHover = Color(0xFF2A1C10); // Ember800 — pressed/hover state
-
-const _textPrimary = Color(0xFFE8E4DC); // warm off-white
-const _textSecondary = Color(0xFFB0A89E); // Smoke200 — subtitles
-const _textMuted = Color(0xFF7A7068); // Smoke400 — section headers
-const _textAccent = Color(0xFFFFC875); // Flame200 — ember highlight
-const _accentOrange = Color(0xFFFE7E00); // Brand orange
-const _accentAmber = Color(0xFFF59B30); // Flame400 — leading icons
-
-const _divider = Color(0xFF2A2820); // subtle warm-gray line
-const _borderSection = Color(0xFF2E2A24); // card border
-
-const _logoutRed = Color(
-  0xFFE07060,
-); // muted warm red — on-brand vs harsh Colors.red
+const _bgSection = Color(0xFF1E1C18);
+const _bgItemHover = Color(0xFF2A1C10);
+const _textPrimary = Color(0xFFE8E4DC);
+const _textSecondary = Color(0xFFB0A89E);
+const _textMuted = Color(0xFF7A7068);
+const _accentAmber = Color(0xFFF59B30);
+const _divider = Color(0xFF2A2820);
+const _borderSection = Color(0xFF2E2A24);
+const _logoutRed = Color(0xFFE07060);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
-  Future<void> _logout(BuildContext context) async {
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  static const _durationOptions = [
+    (label: '15s', seconds: 15),
+    (label: '30s', seconds: 30),
+    (label: '1 min', seconds: 60),
+    (label: '5 min', seconds: 300),
+    (label: '15 min', seconds: 900),
+    (label: '30 min', seconds: 1800),
+  ];
+
+  Future<void> _logout() async {
+    final navigator = Navigator.of(context);
     await FirebaseAuth.instance.signOut();
-    Navigator.of(context).pushNamedAndRemoveUntil('/signup', (route) => false);
+    navigator.popUntil((route) => route.isFirst);
+  }
+
+  void _showDurationPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1610),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4, bottom: 16),
+                    child: Text(
+                      'MAX RECORD DURATION',
+                      style: TextStyle(
+                        color: _textMuted,
+                        fontFamily: 'Montserrat',
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children:
+                        _durationOptions.map((opt) {
+                          final selected =
+                              AppSettings.instance.recordingDurationLimit ==
+                              opt.seconds;
+                          return GestureDetector(
+                            onTap: () async {
+                              await AppSettings.instance
+                                  .setRecordingDurationLimit(opt.seconds);
+                              setSheetState(() {});
+                              setState(() {});
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    selected
+                                        ? const Color(0xFF4A3010)
+                                        : const Color(0xFF2A2820),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color:
+                                      selected
+                                          ? const Color(0xFFF59B30)
+                                          : const Color(0xFF3A3228),
+                                  width: selected ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Text(
+                                opt.label,
+                                style: TextStyle(
+                                  color:
+                                      selected
+                                          ? const Color(0xFFFFC875)
+                                          : _textSecondary,
+                                  fontFamily: 'Montserrat',
+                                  fontWeight:
+                                      selected
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String get _currentDurationLabel {
+    final current = AppSettings.instance.recordingDurationLimit;
+    return _durationOptions
+        .firstWhere(
+          (o) => o.seconds == current,
+          orElse: () => (label: '${current}s', seconds: current),
+        )
+        .label;
   }
 
   @override
@@ -54,7 +161,6 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
         children: [
-          // ── Video section ──────────────────────────────────────────────
           _SectionHeader(label: 'Video'),
           _SettingsGroup(
             children: [
@@ -62,21 +168,26 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.hd_outlined,
                 title: 'Video quality',
                 subtitle: '1080p (default)',
-                onTap: () {},
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: Colors.black54,
+                      duration: Duration(seconds: 2),
+                      content: Text('Resolution changes coming soon.'),
+                    ),
+                  );
+                },
               ),
               _SettingsDivider(),
               _SettingsTile(
                 icon: Icons.timer_outlined,
                 title: 'Record duration limit',
-                subtitle: 'TBD',
-                onTap: () {},
+                subtitle: _currentDurationLabel,
+                onTap: _showDurationPicker,
               ),
             ],
           ),
-
           const SizedBox(height: 28),
-
-          // ── Account section ────────────────────────────────────────────
           _SectionHeader(label: 'Account'),
           _SettingsGroup(
             children: [
@@ -86,7 +197,7 @@ class SettingsScreen extends StatelessWidget {
                 titleColor: _logoutRed,
                 iconColor: _logoutRed,
                 showChevron: false,
-                onTap: () => _logout(context),
+                onTap: _logout,
               ),
             ],
           ),
@@ -173,23 +284,19 @@ class _SettingsTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              // Icon in a warm ember-tinted container
               Container(
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
                   color:
                       iconColor == _logoutRed
-                          ? const Color(0xFF2A1410) // dark red-brown for logout
-                          : const Color(
-                            0xFF2A1C10,
-                          ), // Ember800 for normal items
+                          ? const Color(0xFF2A1410)
+                          : const Color(0xFF2A1C10),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(icon, color: iconColor, size: 18),
               ),
               const SizedBox(width: 14),
-              // Title + subtitle
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,7 +339,7 @@ class _SettingsDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Padding(
-      padding: EdgeInsets.only(left: 64), // indented past the icon
+      padding: EdgeInsets.only(left: 64),
       child: Divider(height: 1, color: _divider),
     );
   }

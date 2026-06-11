@@ -23,6 +23,7 @@ import '../../services/auth_service.dart';
 import '../../screens/settings_screen.dart';
 import '../../screens/my_videos_screen.dart';
 import '../../services/hardening/chunk_upload_queue.dart';
+import '../app_settings.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -61,17 +62,35 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /* ---------------- Helpers ---------------- */
 
   Future<void> _loadActiveList() async {
+    // show cached value immediately
+    if (AppSettings.instance.activeListId != null && mounted) {
+      setState(() {
+        _activeListId = AppSettings.instance.activeListId;
+        _activeListTitle = AppSettings.instance.activeListTitle;
+        _activeListLoading = false;
+      });
+    }
+
+    // reconcile with server
     try {
       final data = await AuthService.instance.api.getActiveList();
       final active = data['active'];
-      final id = (active is Map<String, dynamic>) ? active['listId']?.toString() : null;
-      final title = (active is Map<String, dynamic>) ? active['title']?.toString() : null;
+      final id =
+          (active is Map<String, dynamic>)
+              ? active['listId']?.toString()
+              : null;
+      final title =
+          (active is Map<String, dynamic>) ? active['title']?.toString() : null;
+      final resolvedId = (id != null && id.isNotEmpty) ? id : null;
+      final resolvedTitle =
+          (title != null && title.trim().isNotEmpty) ? title.trim() : null;
       if (!mounted) return;
       setState(() {
-        _activeListId = (id != null && id.isNotEmpty) ? id : null;
-        _activeListTitle = (title != null && title.trim().isNotEmpty) ? title.trim() : null;
-        _activeListLoading = false;  // ← add this
+        _activeListId = resolvedId;
+        _activeListTitle = resolvedTitle;
+        _activeListLoading = false;
       });
+      await AppSettings.instance.setActiveList(resolvedId, resolvedTitle);
     } catch (_) {
       if (mounted) setState(() => _activeListLoading = false);
     }
@@ -174,15 +193,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     super.initState();
     cameraBloc = BlocProvider.of<CameraBloc>(context);
     WidgetsBinding.instance.addObserver(this);
- 
+
     _loadActiveList();
     _loadSavedVideosFromDisk();
     _recoverOrphanedSessions();
- 
+
     // Resume any uploads that were interrupted by a crash or signal loss.
-    ChunkUploadQueue.instance.recoverAll();           // <-- add this line
+    ChunkUploadQueue.instance.recoverAll(); // <-- add this line
   }
- 
 
   @override
   void dispose() {
@@ -191,7 +209,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   bool _appIsInBackground = false;
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
@@ -229,7 +247,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         );
         await _flushPendingChunks();
       } else {
-        debugPrint('[CameraPage] saveChunk failed for index=${state.index}, skipping upload');
+        debugPrint(
+          '[CameraPage] saveChunk failed for index=${state.index}, skipping upload',
+        );
       }
       return;
     }
@@ -304,22 +324,24 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final sid = sessionId;
       final startedAt = sessionStartTime;
 
-      if (listId == null || listId.isEmpty || sid == null || startedAt == null) {
+      if (listId == null ||
+          listId.isEmpty ||
+          sid == null ||
+          startedAt == null) {
         return;
       }
 
       _creatingSos = true;
 
       try {
-        final recipientsRes =
-            await AuthService.instance.api.getActiveListRecipients(
-          listId: listId,
-        );
+        final recipientsRes = await AuthService.instance.api
+            .getActiveListRecipients(listId: listId);
         debugPrint('RAW RECIPIENTS RESPONSE: $recipientsRes');
 
-        final recipients = (recipientsRes['contacts'] as List<dynamic>? ?? [])
-            .whereType<Map<String, dynamic>>()
-            .toList();
+        final recipients =
+            (recipientsRes['contacts'] as List<dynamic>? ?? [])
+                .whereType<Map<String, dynamic>>()
+                .toList();
 
         final res = await AuthService.instance.api.createSos(
           listId: listId,
@@ -368,12 +390,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /// Uploads all queued chunks that arrived before [sosServerId] was set.
   Future<void> _flushPendingChunks() async {
     final sosId = sosServerId;
-    debugPrint('[CameraPage] _flushPendingChunks: sosId=$sosId, pending=${_pendingChunks.length}');
+    debugPrint(
+      '[CameraPage] _flushPendingChunks: sosId=$sosId, pending=${_pendingChunks.length}',
+    );
     if (sosId == null || _pendingChunks.isEmpty) return;
- 
+
     final toUpload = List<CameraChunkReady>.from(_pendingChunks);
     _pendingChunks.clear();
- 
+
     for (final chunk in toUpload) {
       await ChunkUploadQueue.instance.enqueue(
         sosId: sosId,
@@ -402,6 +426,18 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   /* ---------------- Actions ---------------- */
 
   Future<void> startRecording() async {
+    cameraBloc.recordDurationLimit =
+        AppSettings.instance.recordingDurationLimit;
+    if (_activeListId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.black54,
+          duration: Duration(seconds: 2),
+          content: Text('No active list — recording locally only.'),
+        ),
+      );
+    }
+
     try {
       final bytes = await takeCameraScreenshot(key: screenshotKey);
       if (mounted) setState(() => screenshotBytes = bytes);
@@ -450,26 +486,29 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     final bool disableButtons = !(isReady && !isRecording);
 
     final hasActiveList = (_activeListId != null && _activeListId!.isNotEmpty);
-    final pillTitle = _activeListLoading
-        ? 'Loading...'
-        : hasActiveList
+    final pillTitle =
+        _activeListLoading
+            ? 'Loading...'
+            : hasActiveList
             ? (_activeListTitle ?? 'Active list')
             : 'No active list';
 
     final controller = cameraBloc.getController();
     final canPreview = isReady && _controllerUsable(controller);
 
-    final Widget preview = canPreview
-        ? KeyedSubtree(
-            key: ValueKey(controller!.hashCode),
-            child: Transform.scale(
-              scale: 1 /
-                  (controller.value.aspectRatio *
-                      MediaQuery.of(context).size.aspectRatio),
-              child: CameraPreview(controller),
-            ),
-          )
-        : const SizedBox.shrink();
+    final Widget preview =
+        canPreview
+            ? KeyedSubtree(
+              key: ValueKey(controller!.hashCode),
+              child: Transform.scale(
+                scale:
+                    1 /
+                    (controller.value.aspectRatio *
+                        MediaQuery.of(context).size.aspectRatio),
+                child: CameraPreview(controller),
+              ),
+            )
+            : const SizedBox.shrink();
 
     return Column(
       children: [
@@ -508,13 +547,17 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     radius: 25,
                     child: IconButton(
                       tooltip: 'My Videos',
-                      icon: const Icon(Icons.video_library,
-                          color: Colors.black, size: 28),
+                      icon: const Icon(
+                        Icons.video_library,
+                        color: Colors.black,
+                        size: 28,
+                      ),
                       onPressed: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => MyVideosScreen(videos: _savedVideos),
+                            builder:
+                                (_) => MyVideosScreen(videos: _savedVideos),
                           ),
                         );
                       },
@@ -534,9 +577,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     child: GestureDetector(
                       onTap: _toggleLocationPin,
                       child: CircleAvatar(
-                        backgroundColor: _locationEnabled
-                            ? Colors.red.withOpacity(0.85)
-                            : Colors.white.withOpacity(0.5),
+                        backgroundColor:
+                            _locationEnabled
+                                ? Colors.red.withOpacity(0.85)
+                                : Colors.white.withOpacity(0.5),
                         radius: 25,
                         child: Icon(
                           Icons.cell_tower,
@@ -559,8 +603,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     radius: 25,
                     child: IconButton(
                       tooltip: 'Settings',
-                      icon: const Icon(Icons.settings,
-                          color: Colors.black, size: 28),
+                      icon: const Icon(
+                        Icons.settings,
+                        color: Colors.black,
+                        size: 28,
+                      ),
                       onPressed: () {
                         Navigator.push(
                           context,
@@ -605,13 +652,15 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     alignment: Alignment.center,
                     children: [
                       IgnorePointer(
-                        ignoring: state is! CameraReady ||
+                        ignoring:
+                            state is! CameraReady ||
                             state.decativateRecordButton,
                         child: Opacity(
-                          opacity: (state is! CameraReady ||
-                                  state.decativateRecordButton)
-                              ? 0.4
-                              : 1,
+                          opacity:
+                              (state is! CameraReady ||
+                                      state.decativateRecordButton)
+                                  ? 0.4
+                                  : 1,
                           child: animatedProgressButton(state),
                         ),
                       ),
@@ -628,14 +677,18 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                                 if (cameraBloc.isRecording()) return;
                                 try {
                                   final bytes = await takeCameraScreenshot(
-                                      key: screenshotKey);
+                                    key: screenshotKey,
+                                  );
                                   if (!mounted) return;
                                   setState(() => screenshotBytes = bytes);
                                   cameraBloc.add(CameraSwitch());
                                 } catch (_) {}
                               },
-                              icon: const Icon(Icons.cameraswitch,
-                                  color: Colors.black, size: 28),
+                              icon: const Icon(
+                                Icons.cameraswitch,
+                                color: Colors.black,
+                                size: 28,
+                              ),
                             ),
                           ),
                         ),
@@ -658,8 +711,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                             child: CircleAvatar(
                               backgroundColor: Colors.white.withOpacity(0.5),
                               radius: 25,
-                              child: const Icon(Icons.list,
-                                  color: Colors.black, size: 28),
+                              child: const Icon(
+                                Icons.list,
+                                color: Colors.black,
+                                size: 28,
+                              ),
                             ),
                           ),
                         ),
@@ -684,8 +740,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
     return GestureDetector(
       onTap: () => isRecording ? stopRecording() : startRecording(),
-      onLongPress: startRecording,
-      onLongPressEnd: (_) => stopRecording(),
+      //remove long press options for now - perhaps add them back in if users want it
+      // onLongPress: startRecording,
+      // onLongPressEnd: (_) => stopRecording(),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         height: isRecording ? 90 : 80,
@@ -725,9 +782,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 width: isRecording ? 25 : 64,
                 decoration: BoxDecoration(
                   color: const Color.fromARGB(255, 255, 255, 255),
-                  borderRadius: isRecording
-                      ? BorderRadius.circular(6)
-                      : BorderRadius.circular(100),
+                  borderRadius:
+                      isRecording
+                          ? BorderRadius.circular(6)
+                          : BorderRadius.circular(100),
                 ),
               ),
             ),
@@ -771,8 +829,12 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     child: Container(
                       height: 35,
                       decoration: BoxDecoration(
-                        color: const Color.fromARGB(136, 76, 75, 75)
-                            .withOpacity(0.4),
+                        color: const Color.fromARGB(
+                          136,
+                          76,
+                          75,
+                          75,
+                        ).withOpacity(0.4),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Center(

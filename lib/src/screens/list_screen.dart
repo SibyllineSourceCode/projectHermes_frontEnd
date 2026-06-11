@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../services/app_settings.dart';
 
 // ── Beacon Palette — Lists Screen ────────────────────────────────────────────
 //
@@ -167,6 +168,7 @@ class _ListScreenState extends State<ListScreen> {
         listId: item.id,
         title: item.title,
       );
+      await AppSettings.instance.setActiveList(item.id, item.title);
     } catch (e) {
       if (!mounted) return;
       setState(() => _activeListId = prev);

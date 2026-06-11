@@ -6,6 +6,7 @@ import 'firebase_options.dart';
 import 'src/services/auth_service.dart';
 import 'src/screens/login_screen.dart';
 import 'src/screens/home_screen.dart';
+import 'src/services/app_settings.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -15,6 +16,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await AppSettings.instance.load();
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await FirebaseMessaging.instance.requestPermission();
@@ -43,7 +45,6 @@ class MyApp extends StatelessWidget {
           backgroundColor: Color(0xFF140E08),
           foregroundColor: Color(0xFFE8E4DC),
         ),
-        dialogBackgroundColor: const Color(0xFF1A1610),
         bottomSheetTheme: const BottomSheetThemeData(
           backgroundColor: Color(0xFF1A1610),
         ),
@@ -51,6 +52,7 @@ class MyApp extends StatelessWidget {
           surface: const Color(0xFF1E1C18),
           onSurface: const Color(0xFFE8E4DC),
         ),
+        dialogTheme: DialogThemeData(backgroundColor: const Color(0xFF1A1610)),
       ),
       home: StreamBuilder(
         stream: AuthService.instance.authStateChanges,

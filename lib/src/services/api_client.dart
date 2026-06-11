@@ -10,7 +10,6 @@ class ApiClient {
 
   Future<Map<String, dynamic>> _authedGet(String path) async {
     final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
-    print('GET $baseUrl$path'); 
     final res = await http.get(
       Uri.parse('$baseUrl$path'),
       headers: {'Authorization': 'Bearer $idToken'},
@@ -34,9 +33,8 @@ class ApiClient {
     return _decode(res);
   }
 
-  Future<Map<String,dynamic>> _authedDelete(String path) async {
+  Future<Map<String, dynamic>> _authedDelete(String path) async {
     final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
-    print('GET $baseUrl$path'); 
     final res = await http.delete(
       Uri.parse('$baseUrl$path'),
       headers: {'Authorization': 'Bearer $idToken'},
@@ -45,18 +43,19 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> _authedMultipartPost(
-  String path, {
-  required Map<String, String> fields,
-  required List<http.MultipartFile> files,
+    String path, {
+    required Map<String, String> fields,
+    required List<http.MultipartFile> files,
   }) async {
     final idToken = await FirebaseAuth.instance.currentUser!.getIdToken();
 
     final uri = Uri.parse('$baseUrl$path');
 
-    final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $idToken'
-      ..fields.addAll(fields)
-      ..files.addAll(files);
+    final request =
+        http.MultipartRequest('POST', uri)
+          ..headers['Authorization'] = 'Bearer $idToken'
+          ..fields.addAll(fields)
+          ..files.addAll(files);
 
     final streamedResponse = await request.send();
     final responseBody = await streamedResponse.stream.bytesToString();
@@ -69,7 +68,6 @@ class ApiClient {
 
     return _decode(response);
   }
-
 
   Future<Map<String, dynamic>> _authedPatch(
     String path,
@@ -161,20 +159,26 @@ class ApiClient {
   }) => _authedPost(('/lists/$listID/contacts'), {'contacts': contacts});
 
   Future<Map<String, dynamic>> getListContacts({required String listID}) =>
-    _authedGet('/lists/$listID/contacts');
+      _authedGet('/lists/$listID/contacts');
 
-  Future<Map<String, dynamic>> renameList({required String listID, required String title
+  Future<Map<String, dynamic>> renameList({
+    required String listID,
+    required String title,
   }) => _authedPatch('/lists/$listID', {'title': title});
 
-  Future<Map<String, dynamic>> setActiveList({required String listId, required String title
+  Future<Map<String, dynamic>> setActiveList({
+    required String listId,
+    required String title,
   }) => _authedPost('/lists/active', {'listId': listId, 'title': title});
 
   Future<Map<String, dynamic>> getActiveList() => _authedGet('/lists/active');
 
-  Future<Map<String, dynamic>> getActiveListRecipients({required String listId
+  Future<Map<String, dynamic>> getActiveListRecipients({
+    required String listId,
   }) => _authedGet('/lists/$listId/contacts');
 
-  Future<Map<String,dynamic>> deleteList({required String listId}) => _authedDelete('/lists/$listId');
+  Future<Map<String, dynamic>> deleteList({required String listId}) =>
+      _authedDelete('/lists/$listId');
 
   Future<Map<String, dynamic>> createSos({
     required String listId,
@@ -182,14 +186,14 @@ class ApiClient {
     required String message,
     required List<Map<String, dynamic>> recipients,
     required Map<String, dynamic> extraContext,
-    String? geolocation
+    String? geolocation,
   }) => _authedPost('/sos/create', {
     'listId': listId,
     'listTitle': listTitle,
     'message': message,
     'recipients': recipients,
     'extra': extraContext,
-     if (geolocation != null) 'geolocation': geolocation,
+    if (geolocation != null) 'geolocation': geolocation,
   });
 
   Future<Map<String, dynamic>> uploadSosChunk({
@@ -199,9 +203,7 @@ class ApiClient {
   }) async {
     return _authedMultipartPost(
       '/sos/$sosId/chunk',
-      fields: {
-        'index': index.toString(),
-      },
+      fields: {'index': index.toString()},
       files: [
         await http.MultipartFile.fromPath(
           'file',
@@ -216,10 +218,9 @@ class ApiClient {
     required String userId,
     String? sessionId,
   }) => _authedPost("/sos/finalize", {'userId': userId});
-  
-  Future<Map<String, dynamic>> getSharedSessions() => _authedGet('/me/shared_sessions');
+
+  Future<Map<String, dynamic>> getSharedSessions() =>
+      _authedGet('/me/shared_sessions');
 
   Future<Map<String, dynamic>> getMySessions() => _authedGet('/me/my_sessions');
-
-
 }
