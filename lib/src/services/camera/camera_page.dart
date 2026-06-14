@@ -25,6 +25,8 @@ import '../../screens/my_videos_screen.dart';
 import '../../services/hardening/chunk_upload_queue.dart';
 import '../app_settings.dart';
 
+const _accentAmber = Color(0xFFF59B30);
+
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
 
@@ -533,7 +535,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                   ),
                 ),
 
-              if (!isReady) const Center(child: CircularProgressIndicator()),
+              if (!isReady)
+                const Center(
+                  child: CircularProgressIndicator(color: _accentAmber),
+                ),
               if (state is CameraError) errorWidget(state),
 
               // --- Top-left: My Videos ---
