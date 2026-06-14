@@ -8,7 +8,7 @@
         android:maxSdkVersion="29"
         tools:replace="android:maxSdkVersion"/>
     <application
-        android:label="project_hermes_front_end"
+        android:label="Beacon"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

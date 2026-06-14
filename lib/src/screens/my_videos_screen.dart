@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -6,100 +7,66 @@ import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
-// import 'package:cloud_firestore/cloud_firestore.dart';
-// import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/video_storage_utils.dart';
 import '../services/auth_service.dart';
 
-// ── Beacon Brand Palette ─────────────────────────────────────────────────────
-//
-//  Original brand
-//    #000000  Black
-//    #060300  Near-black
-//    #170B00  Deep brown
-//    #FE7E00  Beacon orange
-//    #686868  Mid gray
-//
-//  Extended palette (warm tones derived from brand)
-//
-//  Ember (warm neutral surfaces — from #170B00 lightened with warmth)
-//    Ember50   #FAF6F0   card / page backgrounds
-//    Ember100  #EDE4D8   surface tint
-//    Ember200  #D4C5B0   dividers
-//    Ember400  #A8917A   muted mid-tone
-//    Ember600  #6B5544   dark warm surface
-//    Ember800  #3A2518   near-dark background
-//    Ember900  #1E1008   near-black warm
-//
-//  Flame (muted amber accents — desaturated from #FE7E00)
-//    Flame50   #FFF5E6   very pale orange tint
-//    Flame100  #FFE0B0   ghost orange (badge bg)
-//    Flame200  #FFC875   soft amber (borders, dividers)
-//    Flame400  #F59B30   secondary accent
-//    Flame600  #C06A00   strong accent
-//    Flame800  #7A4000   dark accent
-//    Flame900  #4A2200   deepest accent
-//
-//  Smoke (warm charcoal — #686868 with warm undertone)
-//    Smoke50   #F5F2EE   lightest warm gray
-//    Smoke100  #D8D0C8   light warm gray
-//    Smoke200  #B0A89E   mid warm gray
-//    Smoke400  #7A7068   secondary text
-//    Smoke600  #484038   dark warm gray
-//    Smoke800  #282018   primary text on light bg
-//    Smoke900  #140E08   deepest warm charcoal
-//
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ── Global / shared ──────────────────────────────────────────────────────────
-const _bgPage = Color(0xFF0E0C0A); // near-black warm — scaffold
-const _bgAppBar = Color(0xFF140E08); // Smoke900 — appbar
-const _textPrimary = Color(0xFFF5F2EE); // Smoke50
-const _playerThumb = Color(0xFFFE7E00); // Brand orange — hero accent
+const _bgPage = Color(0xFF0E0C0A);
+const _bgAppBar = Color(0xFF140E08);
+const _textPrimary = Color(0xFFF5F2EE);
+const _playerThumb = Color(0xFFFE7E00);
 
 // ── MY VIDEOS — Charcoal / wood ──────────────────────────────────────────────
-//  Feel: cool-warm dark gray, like charred wood grain. Personal, local, grounded.
-const _ownBgRow = Color(0xFF1E1C18); // dark warm charcoal
-const _ownBgThumb = Color(0xFF2E2A24); // slightly lighter charcoal
-const _ownDivider = Color(0xFF2A2820); // subtle warm-gray line
-const _ownTextPrimary = Color(0xFFE8E4DC); // warm off-white
-const _ownTextSecondary = Color(0xFFB0A89E); // Smoke200
-const _ownTextMuted = Color(0xFF7A7068); // Smoke400
-const _ownIconAccent = Color(0xFFA8917A); // Ember400 — warm gray-brown
-const _ownSplash = Color(0x0FFFFFFF); // white @6%
-// "Local" badge
-const _ownLocalBadgeBg = Color(0xFF3A3228); // dark charcoal
-const _ownLocalBadgeText = Color(0xFFD8D0C8); // Smoke100
-// "Server" badge — a touch of amber so it reads as "synced" without going full orange
-const _ownServerBadgeBg = Color(0xFF4A3010); // dark amber-brown
-const _ownServerBadgeText = Color(0xFFFFC875); // Flame200
+const _ownBgRow = Color(0xFF1E1C18);
+const _ownBgThumb = Color(0xFF2E2A24);
+const _ownDivider = Color(0xFF2A2820);
+const _ownTextPrimary = Color(0xFFE8E4DC);
+const _ownTextSecondary = Color(0xFFB0A89E);
+const _ownTextMuted = Color(0xFF7A7068);
+const _ownIconAccent = Color(0xFFA8917A);
+const _ownSplash = Color(0x0FFFFFFF);
+const _ownLocalBadgeBg = Color(0xFF3A3228);
+const _ownLocalBadgeText = Color(0xFFD8D0C8);
+const _ownServerBadgeBg = Color(0xFF4A3010);
+const _ownServerBadgeText = Color(0xFFFFC875);
 
 // ── SHARED SESSIONS — Soft ember / firelight ─────────────────────────────────
-//  Feel: warm brown glow, amber accents, like embers in low light. Incoming, alive.
-const _sharedBgRow = Color(0xFF201408); // deep warm brown
-const _sharedBgThumb = Color(0xFF2E1A08); // Ember800-ish
-const _sharedDivider = Color(0xFF3A2010); // Ember800 warm
-const _sharedTextPrimary = Color(0xFFFAF0E0); // warm cream
-const _sharedTextSecondary = Color(0xFFD4A870); // muted gold
-const _sharedTextMuted = Color(0xFF8A6040); // dim amber-brown
-const _sharedIconAccent = Color(0xFFF59B30); // Flame400
-const _sharedSplash = Color(0x1AFE7E00); // brand orange @10%
-// "Ready" badge
-const _sharedReadyBadgeBg = Color(0xFF4A2200); // Flame900
-const _sharedReadyBadgeText = Color(0xFFFFC875); // Flame200
-// "Loading" badge
-const _sharedLoadingBadgeBg = Color(0xFF2A1C10);
-const _sharedLoadingBadgeText = Color(0xFF8A6040);
-// Download button
-const _dlBg = Color(0xFF2A1C10);
-const _dlBorder = Color(0xFFF59B30); // Flame400
-const _dlText = Color(0xFFFFC875); // Flame200
+const _sharedBgRow = Color(0xFF201408);
+const _sharedBgThumb = Color(0xFF2E1A08);
+const _sharedDivider = Color(0xFF3A2010);
+const _sharedTextPrimary = Color(0xFFFAF0E0);
+const _sharedTextSecondary = Color(0xFFD4A870);
+const _sharedTextMuted = Color(0xFF8A6040);
+const _sharedIconAccent = Color(0xFFF59B30);
+const _sharedSplash = Color(0x1AFE7E00);
 
-// ── Geolocation banner (player overlay — shared context) ─────────────────────
+// ── Status badge palette ──────────────────────────────────────────────────────
+// Ready  — amber, signals watchable
+const _badgeReadyBg = Color(0xFF4A2200);
+const _badgeReadyText = Color(0xFFFFC875);
+// Uploading — blue-tinted, signals active transfer
+const _badgeUploadingBg = Color(0xFF0D2340);
+const _badgeUploadingText = Color(0xFF7EC8FF);
+// Stalled — muted red, signals interruption
+const _badgeStalledBg = Color(0xFF3A1010);
+const _badgeStalledText = Color(0xFFFF9E9E);
+// Completed — same as Ready (video is done, fully stitched)
+const _badgeCompletedBg = Color(0xFF0D2E1A);
+const _badgeCompletedText = Color(0xFF7EFFA8);
+// Loading (no finalStoragePath yet, status unknown) — dim
+const _badgeLoadingBg = Color(0xFF2A1C10);
+const _badgeLoadingText = Color(0xFF8A6040);
+
+// ── Download button ───────────────────────────────────────────────────────────
+const _dlBg = Color(0xFF2A1C10);
+const _dlBorder = Color(0xFFF59B30);
+const _dlText = Color(0xFFFFC875);
+
+// ── Geolocation banner ────────────────────────────────────────────────────────
 const _geoBannerBg = Color(0xFF2A1C10);
-const _geoBannerBorder = Color(0xFFC06A00); // Flame600
-const _geoText = Color(0xFFFFC875); // Flame200
-const _geoCopyIcon = Color(0xFFF59B30); // Flame400
+const _geoBannerBorder = Color(0xFFC06A00);
+const _geoText = Color(0xFFFFC875);
+const _geoCopyIcon = Color(0xFFF59B30);
 
 // ── Snackbars ────────────────────────────────────────────────────────────────
 const _snackSuccessBg = Color(0xFF2A1C10);
@@ -107,50 +74,118 @@ const _snackSuccessIcon = Color(0xFFFFC875);
 const _snackErrorBg = Color(0xFF3A1A08);
 const _snackErrorIcon = Color(0xFFFFE0B0);
 
+// ── Timing constants ──────────────────────────────────────────────────────────
+const _pollInterval = Duration(seconds: 10);
+const _stallThreshold = Duration(seconds: 30);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A local video entry carrying its file, sync status, and lazily-loaded thumbnail.
+/// Status values that mirror sos_sessions.status on the backend,
+/// plus a client-derived "stalled" state.
+enum _SessionStatus { live, uploading, stalled, completed }
+
+/// Shared helper: derives the "stalled" state from raw status + lastChunkAt.
+/// A session reads as "stalled" when it isn't completed, has received at
+/// least one chunk, and no new chunk has arrived in the last 30 seconds.
+/// Used by both _VideoEntry (sent videos) and _SharedEntry (received videos).
+_SessionStatus _effectiveSessionStatus(
+  _SessionStatus raw,
+  DateTime? lastChunkAt,
+) {
+  if (raw == _SessionStatus.completed) return _SessionStatus.completed;
+  if (lastChunkAt != null &&
+      DateTime.now().difference(lastChunkAt) > _stallThreshold) {
+    return _SessionStatus.stalled;
+  }
+  return raw;
+}
+
 class _VideoEntry {
   final File file;
   final bool isLocal;
-  final bool isServer;
+
+  // Session linkage — null if this local file has no matching server session
+  // (e.g. an old recording from before sessions were tracked, or a video
+  // that was never uploaded).
+  final String? sosId;
+  _SessionStatus? sessionStatus;
+  DateTime? lastChunkAt;
+
   Uint8List? thumbnail;
   bool thumbnailAttempted = false;
 
   _VideoEntry({
     required this.file,
     required this.isLocal,
-    required this.isServer,
+    this.sosId,
+    this.sessionStatus,
+    this.lastChunkAt,
   });
+
+  /// True if this video has any associated server session at all
+  /// (regardless of status) — used to decide whether to show a second badge.
+  bool get hasSession => sosId != null;
+
+  /// Derived display status, applying the stall rule.
+  _SessionStatus? get effectiveStatus {
+    final raw = sessionStatus;
+    if (raw == null) return null;
+    return _effectiveSessionStatus(raw, lastChunkAt);
+  }
 }
 
-/// A shared session entry from another user's SOS broadcast.
 class _SharedEntry {
   final String sessionId;
   final String hostUid;
-  String senderName = '';
+  String senderName;
   final String? message;
   final String? listTitle;
   final DateTime? createdAt;
-  final String? finalStoragePath;
   final String? geolocation;
+
+  // Updated in-place by poll diffs.
+  String? finalStoragePath;
   String? streamUrl;
+  _SessionStatus sessionStatus;
+  DateTime? lastChunkAt;
+
   bool urlAttempted = false;
-  Uint8List? thumbnail;
   bool thumbnailAttempted = false;
   bool isDownloading = false;
+  Uint8List? thumbnail;
 
   _SharedEntry({
     required this.sessionId,
     required this.hostUid,
+    this.senderName = '',
     this.message,
     this.listTitle,
     this.createdAt,
     this.finalStoragePath,
     this.streamUrl,
-    this.senderName = '',
     this.geolocation,
-  });
+    _SessionStatus? sessionStatus,
+    this.lastChunkAt,
+  }) : sessionStatus = sessionStatus ?? _SessionStatus.live;
+
+  /// Derives the display status at render time. See _effectiveSessionStatus
+  /// for the stall rule — shared with _VideoEntry.
+  _SessionStatus get effectiveStatus =>
+      _effectiveSessionStatus(sessionStatus, lastChunkAt);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+_SessionStatus _parseStatus(String? raw) {
+  switch (raw) {
+    case 'uploading':
+      return _SessionStatus.uploading;
+    case 'completed':
+      return _SessionStatus.completed;
+    case 'live':
+    default:
+      return _SessionStatus.live;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +209,11 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   List<_SharedEntry> _shared = [];
   bool _loadingShared = true;
 
+  // Polling
+  Timer? _pollTimer;
+  bool _polling = false;
+  bool _pollingOwn = false;
+
   _VideoEntry? _playingOwn;
   _SharedEntry? _playingShared;
   VideoPlayerController? _playerController;
@@ -190,13 +230,261 @@ class _MyVideosScreenState extends State<MyVideosScreen>
       _initOwnVideos();
       _initSharedSessions();
     });
+    _startPolling();
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _tabController.dispose();
     _playerController?.dispose();
     super.dispose();
+  }
+
+  /* ──────────────────────── Polling ──────────────────────────────────────── */
+
+  void _startPolling() {
+    // Tick immediately so stalled badges update even with no network activity.
+    // The actual network fetch is guarded by _polling and _loadingShared.
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      _pollSharedSessions();
+      _pollOwnSessions();
+    });
+  }
+
+  Future<void> _pollSharedSessions() async {
+    if (_polling || _loadingShared || !mounted) return;
+    _polling = true;
+
+    try {
+      final response = await AuthService.instance.api.getSharedSessions();
+      if (!mounted) return;
+
+      final rawList = response['sessions'] as List?;
+      if (rawList == null) return;
+
+      bool listChanged = false;
+
+      final freshMap = <String, Map<String, dynamic>>{};
+      for (final raw in rawList) {
+        final d = raw as Map<String, dynamic>;
+        if (d['error'] == true) continue;
+        final id = (d['sessionId'] as String?) ?? '';
+        if (id.isEmpty) continue;
+        freshMap[id] = d;
+      }
+
+      // ── New sessions ──────────────────────────────────────────────────────
+      final existingIds = _shared.map((e) => e.sessionId).toSet();
+      for (final id in freshMap.keys) {
+        if (!existingIds.contains(id)) {
+          final d = freshMap[id]!;
+          final newEntry = _buildEntryFromMap(id, d);
+          _shared.add(newEntry);
+          _loadSharedThumbnail(newEntry);
+          listChanged = true;
+          debugPrint('🔔 [Poll] New shared session: $id');
+        }
+      }
+
+      // ── Existing sessions — diff on finalStoragePath, status, lastChunkAt ─
+      for (final entry in _shared) {
+        final fresh = freshMap[entry.sessionId];
+        if (fresh == null) continue;
+
+        final freshPath = fresh['finalStoragePath'] as String?;
+        final freshUrl = fresh['streamUrl'] as String?;
+        final freshStatus = _parseStatus(fresh['status'] as String?);
+        final freshLastChunk =
+            fresh['lastChunkAt'] != null
+                ? DateTime.tryParse(fresh['lastChunkAt'] as String)
+                : null;
+
+        // Track whether we need to reinitialize the player.
+        final pathChanged =
+            freshPath != null &&
+            freshPath.isNotEmpty &&
+            freshPath != entry.finalStoragePath;
+
+        // Track whether any field that affects the badge changed.
+        final metaChanged =
+            freshStatus != entry.sessionStatus ||
+            freshLastChunk != entry.lastChunkAt ||
+            pathChanged;
+
+        if (metaChanged) {
+          final wasPlaying = _playingShared?.sessionId == entry.sessionId;
+          Duration resumeAt = Duration.zero;
+
+          if (pathChanged && wasPlaying && _playerController != null) {
+            resumeAt = _playerController!.value.position;
+          }
+
+          entry.finalStoragePath = freshPath ?? entry.finalStoragePath;
+          entry.streamUrl = freshUrl ?? entry.streamUrl;
+          entry.sessionStatus = freshStatus;
+          entry.lastChunkAt = freshLastChunk ?? entry.lastChunkAt;
+
+          if (pathChanged) {
+            entry.thumbnailAttempted = false;
+            _loadSharedThumbnail(entry);
+          }
+
+          listChanged = true;
+
+          if (pathChanged && wasPlaying && freshUrl != null) {
+            await _reinitializePlayer(entry, resumeAt: resumeAt);
+          }
+
+          debugPrint(
+            '🔄 [Poll] ${entry.sessionId}: status=${entry.sessionStatus.name}'
+            '  lastChunk=${entry.lastChunkAt}  pathChanged=$pathChanged',
+          );
+        }
+      }
+
+      _shared.sort((a, b) {
+        if (a.createdAt == null && b.createdAt == null) return 0;
+        if (a.createdAt == null) return 1;
+        if (b.createdAt == null) return -1;
+        return b.createdAt!.compareTo(a.createdAt!);
+      });
+
+      if (listChanged && mounted) setState(() {});
+    } catch (e) {
+      debugPrint('⚠️ [Poll] shared_sessions poll failed: $e');
+    } finally {
+      _polling = false;
+    }
+  }
+
+  /// Polls /me/my_sessions and refreshes status/lastChunkAt on _entries
+  /// whose sosId matches a returned session. Drives the Uploading /
+  /// Stalled / Server badge on "My Videos".
+  ///
+  /// Lighter than _pollSharedSessions — there's no player or thumbnail to
+  /// manage here, just badge state.
+  Future<void> _pollOwnSessions() async {
+    if (_pollingOwn || _loadingOwn || !mounted) return;
+    _pollingOwn = true;
+
+    try {
+      final response = await AuthService.instance.api.getMySessions();
+      if (!mounted) return;
+
+      final sessionList = (response['sessions'] as List<dynamic>?) ?? [];
+      if (sessionList.isEmpty) return;
+
+      final sessionMeta =
+          <String, ({_SessionStatus status, DateTime? lastChunkAt})>{};
+      for (final raw in sessionList) {
+        final d = raw as Map<String, dynamic>;
+        final sosId = d['sosId'] as String?;
+        if (sosId == null) continue;
+        sessionMeta[sosId] = (
+          status: _parseStatus(d['status'] as String?),
+          lastChunkAt:
+              d['lastChunkAt'] != null
+                  ? DateTime.tryParse(d['lastChunkAt'] as String)
+                  : null,
+        );
+      }
+
+      bool changed = false;
+      for (final entry in _entries) {
+        final sosId = entry.sosId;
+        if (sosId == null) continue;
+
+        final fresh = sessionMeta[sosId];
+        if (fresh == null) continue;
+
+        if (fresh.status != entry.sessionStatus ||
+            fresh.lastChunkAt != entry.lastChunkAt) {
+          entry.sessionStatus = fresh.status;
+          entry.lastChunkAt = fresh.lastChunkAt;
+          changed = true;
+          debugPrint(
+            '🔄 [Poll] own session $sosId: status=${fresh.status.name}'
+            '  lastChunk=${fresh.lastChunkAt}',
+          );
+        }
+      }
+
+      if (changed && mounted) setState(() {});
+    } catch (e) {
+      debugPrint('⚠️ [Poll] my_sessions poll failed: $e');
+    } finally {
+      _pollingOwn = false;
+    }
+  }
+
+  _SharedEntry _buildEntryFromMap(String id, Map<String, dynamic> d) {
+    return _SharedEntry(
+      sessionId: id,
+      hostUid: d['hostUid'] ?? '',
+      message: d['message'] as String?,
+      listTitle: d['listTitle'] as String?,
+      finalStoragePath: d['finalStoragePath'] as String?,
+      streamUrl: d['streamUrl'] as String?,
+      senderName: d['senderName'] ?? '',
+      geolocation: d['geolocation'] as String?,
+      sessionStatus: _parseStatus(d['status'] as String?),
+      lastChunkAt:
+          d['lastChunkAt'] != null
+              ? DateTime.tryParse(d['lastChunkAt'] as String)
+              : null,
+      createdAt:
+          d['createdAt'] != null
+              ? DateTime.tryParse(d['createdAt'] as String)
+              : null,
+    );
+  }
+
+  /* ──────────────────────── Player reinit ────────────────────────────────── */
+
+  Future<void> _reinitializePlayer(
+    _SharedEntry entry, {
+    Duration resumeAt = Duration.zero,
+  }) async {
+    final url = entry.streamUrl;
+    if (url == null) return;
+
+    final oldCtrl = _playerController;
+    _playerController = null;
+
+    try {
+      await oldCtrl?.pause();
+      oldCtrl?.dispose();
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _playerReady = false;
+      _playingShared = entry;
+    });
+
+    final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+    _playerController = ctrl;
+
+    try {
+      await ctrl.initialize();
+    } catch (e) {
+      debugPrint('❌ [Poll] Player reinit failed: $e');
+      return;
+    }
+
+    if (!mounted) return;
+
+    ctrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    if (resumeAt > Duration.zero && resumeAt < ctrl.value.duration) {
+      await ctrl.seekTo(resumeAt);
+    }
+
+    setState(() => _playerReady = true);
+    await ctrl.play();
   }
 
   /* ──────────────────────── My Videos loading ─────────────────────────────── */
@@ -220,16 +508,51 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         });
 
     final sessionsResult = await AuthService.instance.api.getMySessions();
-    final serverSosIds =
-        ((sessionsResult['sosIds'] as List<dynamic>?) ?? [])
-            .whereType<String>()
-            .toSet();
+
+    // New response shape: { ok, sessions: [{ sosId, status, lastChunkAt }] }
+    // covering live/uploading/completed — not just completed as before.
+    final sessionList = (sessionsResult['sessions'] as List<dynamic>?) ?? [];
+
+    // Map sosId -> {status, lastChunkAt} for quick lookup while matching
+    // local files below.
+    final sessionMeta =
+        <String, ({_SessionStatus status, DateTime? lastChunkAt})>{};
+    for (final raw in sessionList) {
+      final d = raw as Map<String, dynamic>;
+      final sosId = d['sosId'] as String?;
+      if (sosId == null) continue;
+      sessionMeta[sosId] = (
+        status: _parseStatus(d['status'] as String?),
+        lastChunkAt:
+            d['lastChunkAt'] != null
+                ? DateTime.tryParse(d['lastChunkAt'] as String)
+                : null,
+      );
+    }
 
     final diskVideos = await VideoStorageUtils.instance.loadFinalVideos();
     final entries =
         diskVideos.map((f) {
-          final isServer = serverSosIds.any((id) => f.path.contains(id));
-          return _VideoEntry(file: f, isLocal: true, isServer: isServer);
+          // A local file's path embeds its sosId — find the matching session,
+          // if any. Files with no match (pre-session recordings, or never
+          // uploaded) get sosId == null and show only the "Local" badge.
+          String? matchedSosId;
+          for (final id in sessionMeta.keys) {
+            if (f.path.contains(id)) {
+              matchedSosId = id;
+              break;
+            }
+          }
+
+          final meta = matchedSosId != null ? sessionMeta[matchedSosId] : null;
+
+          return _VideoEntry(
+            file: f,
+            isLocal: true,
+            sosId: matchedSosId,
+            sessionStatus: meta?.status,
+            lastChunkAt: meta?.lastChunkAt,
+          );
         }).toList();
 
     entries.sort(
@@ -251,45 +574,23 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   Future<void> _initSharedSessions() async {
     try {
       final response = await AuthService.instance.api.getSharedSessions();
-      debugPrint('[SharedSessions] raw response: $response');
-
       final rawList = response['sessions'];
+
       if (rawList == null) {
-        debugPrint('[SharedSessions] ⚠️ sessions key was null in response');
         if (mounted) setState(() => _loadingShared = false);
         return;
       }
 
-      final List sessions = rawList as List;
-      debugPrint('[SharedSessions] got ${sessions.length} sessions');
-
       final results =
-          sessions.map((d) {
+          (rawList as List).map((d) {
             if (d['error'] == true) {
-              debugPrint(
-                '[SharedSessions] ⚠️ skipping errored session: ${d['sessionId']}',
-              );
               return _SharedEntry(
                 sessionId: d['sessionId'] ?? 'unknown',
                 hostUid: '',
                 message: 'Error — something went wrong with this video',
               );
             }
-
-            return _SharedEntry(
-              sessionId: d['sessionId'] ?? '',
-              hostUid: d['hostUid'] ?? '',
-              message: d['message'],
-              listTitle: d['listTitle'],
-              finalStoragePath: d['finalStoragePath'],
-              streamUrl: d['streamUrl'],
-              senderName: d['senderName'] ?? '',
-              geolocation: d['geolocation'] as String?,
-              createdAt:
-                  d['createdAt'] != null
-                      ? DateTime.tryParse(d['createdAt'])
-                      : null,
-            );
+            return _buildEntryFromMap((d['sessionId'] as String?) ?? '', d);
           }).toList();
 
       results.sort((a, b) {
@@ -309,8 +610,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         _loadSharedThumbnail(entry);
       }
     } catch (e, stack) {
-      debugPrint('[SharedSessions] ❌ load error: $e');
-      debugPrint('[SharedSessions] stack: $stack');
+      debugPrint('[SharedSessions] ❌ load error: $e\n$stack');
       if (mounted) setState(() => _loadingShared = false);
     }
   }
@@ -340,48 +640,50 @@ class _MyVideosScreenState extends State<MyVideosScreen>
       await tempFile.delete().catchError((_) => tempFile);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: _snackSuccessBg,
-          duration: Duration(seconds: 2),
-          content: Row(
-            children: [
-              Icon(
-                Icons.check_circle_outline,
-                color: _snackSuccessIcon,
-                size: 16,
-              ),
-              SizedBox(width: 8),
-              Text(
-                'Saved to your videos',
-                style: TextStyle(color: _textPrimary, fontSize: 13),
-              ),
-            ],
-          ),
-        ),
+      _showSnack(
+        icon: Icons.check_circle_outline,
+        iconColor: _snackSuccessIcon,
+        text: 'Saved to your videos',
+        bg: _snackSuccessBg,
       );
     } catch (e) {
       debugPrint('[Download] ❌ error: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: _snackErrorBg,
-          duration: Duration(seconds: 3),
-          content: Row(
-            children: [
-              Icon(Icons.error_outline, color: _snackErrorIcon, size: 16),
-              SizedBox(width: 8),
-              Text(
-                'Download failed — please try again',
-                style: TextStyle(color: _textPrimary, fontSize: 13),
-              ),
-            ],
-          ),
-        ),
+      _showSnack(
+        icon: Icons.error_outline,
+        iconColor: _snackErrorIcon,
+        text: 'Download failed — please try again',
+        bg: _snackErrorBg,
+        duration: const Duration(seconds: 3),
       );
     } finally {
       if (mounted) setState(() => entry.isDownloading = false);
     }
+  }
+
+  void _showSnack({
+    required IconData icon,
+    required Color iconColor,
+    required String text,
+    required Color bg,
+    Duration duration = const Duration(seconds: 2),
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: bg,
+        duration: duration,
+        content: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 16),
+            const SizedBox(width: 8),
+            Text(
+              text,
+              style: const TextStyle(color: _textPrimary, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /* ──────────────────────── Thumbnails ───────────────────────────────────── */
@@ -397,7 +699,6 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     final cacheFile = File(p.join(cacheDir.path, '$cacheKey.jpg'));
 
     Uint8List? bytes;
-
     if (await cacheFile.exists()) {
       bytes = await cacheFile.readAsBytes();
     } else {
@@ -415,9 +716,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
       } catch (_) {}
     }
 
-    if (bytes != null && mounted) {
-      setState(() => entry.thumbnail = bytes);
-    }
+    if (bytes != null && mounted) setState(() => entry.thumbnail = bytes);
   }
 
   Future<void> _loadSharedThumbnail(_SharedEntry entry) async {
@@ -427,11 +726,11 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     final cacheDir = _thumbCacheDir;
     if (cacheDir == null) return;
 
-    final cacheKey = entry.sessionId.hashCode.toRadixString(16);
+    final cacheKey = (entry.finalStoragePath ?? entry.sessionId).hashCode
+        .toRadixString(16);
     final cacheFile = File(p.join(cacheDir.path, 'shared_$cacheKey.jpg'));
 
     Uint8List? bytes;
-
     if (await cacheFile.exists()) {
       bytes = await cacheFile.readAsBytes();
     } else {
@@ -449,9 +748,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
       } catch (_) {}
     }
 
-    if (bytes != null && mounted) {
-      setState(() => entry.thumbnail = bytes);
-    }
+    if (bytes != null && mounted) setState(() => entry.thumbnail = bytes);
   }
 
   /* ──────────────────────── Player ───────────────────────────────────────── */
@@ -481,8 +778,8 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     final url = entry.streamUrl;
     if (url == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+        SnackBar(
+          content: const Text(
             'Video not ready yet — try again shortly',
             style: TextStyle(color: _textPrimary),
           ),
@@ -531,6 +828,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   }
 
   void _toggleControls() => setState(() => _showControls = !_showControls);
+
   void _togglePlayPause() {
     final ctrl = _playerController;
     if (ctrl == null) return;
@@ -559,8 +857,9 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   String _formatSize(File f) {
     try {
       final bytes = f.lengthSync();
-      if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+      return bytes < 1024 * 1024
+          ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+          : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     } catch (_) {
       return '';
     }
@@ -601,7 +900,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                   indicatorColor: _playerThumb,
                   indicatorWeight: 2,
                   labelColor: _textPrimary,
-                  unselectedLabelColor: Color(0xFF7A7068),
+                  unselectedLabelColor: const Color(0xFF7A7068),
                   labelStyle: const TextStyle(
                     fontFamily: 'Montserrat',
                     fontWeight: FontWeight.w600,
@@ -631,7 +930,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     );
   }
 
-  /* ──────────────────────── My Videos tab — charcoal/wood ────────────────── */
+  /* ──────────────────────── My Videos tab ────────────────────────────────── */
 
   Widget _buildOwnTab() {
     if (_loadingOwn) {
@@ -658,7 +957,6 @@ class _MyVideosScreenState extends State<MyVideosScreen>
 
   Widget _buildOwnRow(_VideoEntry entry) {
     final name = entry.file.path.split('/').last;
-
     return Material(
       color: _ownBgRow,
       child: InkWell(
@@ -724,14 +1022,9 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                     bg: _ownLocalBadgeBg,
                     textColor: _ownLocalBadgeText,
                   ),
-                  if (entry.isServer) ...[
+                  if (entry.hasSession) ...[
                     const SizedBox(height: 6),
-                    _buildBadge(
-                      icon: Icons.cloud_done_outlined,
-                      label: 'Server',
-                      bg: _ownServerBadgeBg,
-                      textColor: _ownServerBadgeText,
-                    ),
+                    _buildSentStatusBadge(entry.effectiveStatus!),
                   ],
                 ],
               ),
@@ -742,7 +1035,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     );
   }
 
-  /* ──────────────────────── Shared Sessions tab — soft ember ─────────────── */
+  /* ──────────────────────── Shared Sessions tab ───────────────────────────── */
 
   Widget _buildSharedTab() {
     if (_loadingShared) {
@@ -781,11 +1074,10 @@ class _MyVideosScreenState extends State<MyVideosScreen>
   }
 
   Widget _buildSharedRow(_SharedEntry entry) {
+    final status = entry.effectiveStatus;
     final isReady = entry.streamUrl != null;
     final sender =
         entry.senderName.isNotEmpty ? entry.senderName : entry.hostUid;
-    final dateStr = _formatDateFromDt(entry.createdAt);
-    final subtitle = entry.message ?? entry.listTitle ?? '';
 
     return Material(
       color: _sharedBgRow,
@@ -796,6 +1088,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
+              // ── Thumbnail ──────────────────────────────────────────────
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -827,6 +1120,8 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                 ),
               ),
               const SizedBox(width: 12),
+
+              // ── Text column ────────────────────────────────────────────
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -854,10 +1149,11 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                         ),
                       ],
                     ),
-                    if (subtitle.isNotEmpty) ...[
+                    if ((entry.message ?? entry.listTitle ?? '')
+                        .isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
-                        subtitle,
+                        entry.message ?? entry.listTitle ?? '',
                         style: const TextStyle(
                           color: _sharedTextSecondary,
                           fontSize: 12,
@@ -869,7 +1165,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                     ],
                     const SizedBox(height: 4),
                     Text(
-                      dateStr,
+                      _formatDateFromDt(entry.createdAt),
                       style: const TextStyle(
                         color: _sharedTextMuted,
                         fontSize: 11,
@@ -879,22 +1175,13 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                 ),
               ),
               const SizedBox(width: 8),
+
+              // ── Badge column ───────────────────────────────────────────
               Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _buildBadge(
-                    icon:
-                        isReady
-                            ? Icons.cloud_done_outlined
-                            : Icons.cloud_outlined,
-                    label: isReady ? 'Ready' : 'Loading',
-                    bg: isReady ? _sharedReadyBadgeBg : _sharedLoadingBadgeBg,
-                    textColor:
-                        isReady
-                            ? _sharedReadyBadgeText
-                            : _sharedLoadingBadgeText,
-                  ),
+                  _buildStatusBadge(status, hasStream: isReady),
                   if (isReady) ...[
                     const SizedBox(height: 6),
                     _buildDownloadButton(entry),
@@ -906,6 +1193,103 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         ),
       ),
     );
+  }
+
+  /* ──────────────────────── Status badge ─────────────────────────────────── */
+
+  /// Renders the contextual status badge for a shared session.
+  ///
+  /// States and their meaning:
+  ///   uploading  — chunks are actively arriving; more footage is coming
+  ///   stalled    — chunk stream went quiet for >30s but session isn't done;
+  ///                likely a connectivity interruption mid-recording
+  ///   completed  — stitching finished; this is the full video
+  ///   live/other — session exists but no chunks yet (just created)
+  ///   fallback   — stream URL present but status not yet resolved
+  Widget _buildStatusBadge(_SessionStatus status, {required bool hasStream}) {
+    switch (status) {
+      case _SessionStatus.uploading:
+        return _buildBadge(
+          icon: Icons.cloud_upload_outlined,
+          label: 'Uploading',
+          bg: _badgeUploadingBg,
+          textColor: _badgeUploadingText,
+          pulse: true,
+        );
+      case _SessionStatus.stalled:
+        return _buildBadge(
+          icon: Icons.cloud_off_outlined,
+          label: 'Stalled',
+          bg: _badgeStalledBg,
+          textColor: _badgeStalledText,
+        );
+      case _SessionStatus.completed:
+        return _buildBadge(
+          icon: Icons.cloud_done_outlined,
+          label: 'Completed',
+          bg: _badgeCompletedBg,
+          textColor: _badgeCompletedText,
+        );
+      case _SessionStatus.live:
+        // Session created, no chunks uploaded yet.
+        if (hasStream) {
+          return _buildBadge(
+            icon: Icons.cloud_done_outlined,
+            label: 'Ready',
+            bg: _badgeReadyBg,
+            textColor: _badgeReadyText,
+          );
+        }
+        return _buildBadge(
+          icon: Icons.cloud_outlined,
+          label: 'Waiting',
+          bg: _badgeLoadingBg,
+          textColor: _badgeLoadingText,
+        );
+    }
+  }
+
+  /// Renders the second badge for a video the user recorded and sent.
+  ///
+  /// States and their meaning:
+  ///   uploading  — chunks are still being sent to the server
+  ///   stalled    — upload went quiet for >30s but session isn't completed;
+  ///                likely a connectivity interruption mid-upload
+  ///   completed  — stitching finished; a full copy lives on the server
+  ///   live       — session created but no chunks uploaded yet
+  Widget _buildSentStatusBadge(_SessionStatus status) {
+    switch (status) {
+      case _SessionStatus.uploading:
+        return _buildBadge(
+          icon: Icons.cloud_upload_outlined,
+          label: 'Uploading',
+          bg: _badgeUploadingBg,
+          textColor: _badgeUploadingText,
+          pulse: true,
+        );
+      case _SessionStatus.stalled:
+        return _buildBadge(
+          icon: Icons.cloud_off_outlined,
+          label: 'Stalled',
+          bg: _badgeStalledBg,
+          textColor: _badgeStalledText,
+        );
+      case _SessionStatus.completed:
+        return _buildBadge(
+          icon: Icons.cloud_done_outlined,
+          label: 'Server',
+          bg: _ownServerBadgeBg,
+          textColor: _ownServerBadgeText,
+        );
+      case _SessionStatus.live:
+        return _buildBadge(
+          icon: Icons.cloud_outlined,
+          label: 'Uploading',
+          bg: _badgeUploadingBg,
+          textColor: _badgeUploadingText,
+          pulse: true,
+        );
+    }
   }
 
   /* ──────────────────────── Player overlay ────────────────────────────────── */
@@ -934,7 +1318,7 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     return GestureDetector(
       onTap: _closePlayer,
       child: Container(
-        color: const Color(0xED0A0602), // near-black warm @93%
+        color: const Color(0xED0A0602),
         child: SafeArea(
           child: Column(
             children: [
@@ -950,28 +1334,11 @@ class _MyVideosScreenState extends State<MyVideosScreen>
                         ClipboardData(text: _playingShared!.geolocation!),
                       );
                       if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          backgroundColor: _snackSuccessBg,
-                          duration: Duration(seconds: 2),
-                          content: Row(
-                            children: [
-                              Icon(
-                                Icons.check_circle_outline,
-                                color: _snackSuccessIcon,
-                                size: 16,
-                              ),
-                              SizedBox(width: 8),
-                              Text(
-                                'Coordinates copied to clipboard',
-                                style: TextStyle(
-                                  color: _textPrimary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      _showSnack(
+                        icon: Icons.check_circle_outline,
+                        iconColor: _snackSuccessIcon,
+                        text: 'Coordinates copied to clipboard',
+                        bg: _snackSuccessBg,
                       );
                     },
                     child: Container(
@@ -1244,8 +1611,9 @@ class _MyVideosScreenState extends State<MyVideosScreen>
     required String label,
     required Color bg,
     required Color textColor,
+    bool pulse = false,
   }) {
-    return Container(
+    final badge = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: bg.withOpacity(0.35),
@@ -1269,5 +1637,53 @@ class _MyVideosScreenState extends State<MyVideosScreen>
         ],
       ),
     );
+
+    // Uploading badge gets a subtle animated opacity pulse so it reads
+    // as "live" without being distracting.
+    if (pulse) return _PulseBadge(child: badge);
+    return badge;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subtle opacity pulse for the Uploading badge.
+// Cycles between full opacity and 55% over 1.4 seconds.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PulseBadge extends StatefulWidget {
+  final Widget child;
+  const _PulseBadge({required this.child});
+
+  @override
+  State<_PulseBadge> createState() => _PulseBadgeState();
+}
+
+class _PulseBadgeState extends State<_PulseBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
+    _opacity = Tween<double>(
+      begin: 1.0,
+      end: 0.55,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      FadeTransition(opacity: _opacity, child: widget.child);
 }
